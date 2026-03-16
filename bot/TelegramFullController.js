@@ -15,6 +15,40 @@ const AutoTokenDetectionManager = require('../transfer/AutoTokenDetectionManager
 const ModernUI = require('../core/ModernUI');
 const ui = new ModernUI();
 
+
+// ==========================================================
+// == CONTROLLER USER CHECK
+// == Daftar & cek akses user via Controller HTTP server
+// ==========================================================
+
+const http = require('http');
+
+function controllerRequest(path) {
+    return new Promise((resolve) => {
+        const req = http.get(`http://127.0.0.1:${process.env.CONTROLLER_HTTP_PORT || 3099}${path}`, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                try { resolve(JSON.parse(data)); }
+                catch (e) { resolve(null); }
+            });
+        });
+        req.on('error', () => resolve(null)); // Controller tidak jalan = skip cek
+        req.setTimeout(2000, () => { req.destroy(); resolve(null); });
+    });
+}
+
+async function registerUserToController(chatId, username, firstName) {
+    const enc = encodeURIComponent;
+    return await controllerRequest(
+        `/register?id=${chatId}&username=${enc(username || '')}&firstName=${enc(firstName || '')}`
+    );
+}
+
+async function checkUserAccess(chatId) {
+    return await controllerRequest(`/check?id=${chatId}`);
+}
+
 class TelegramFullController {
     constructor(secureConfig) {
         this.config = secureConfig;
@@ -40,12 +74,31 @@ class TelegramFullController {
             this.config.GITHUB_BACKUP_URL,
             this.config.ENCRYPTION_SALT
         );
+        this._securityInitialized = false;  // Flag: initialize() hanya jalan 1x
+        this._securityInitializing = false; // Flag: cegah race condition
     }
 
     // ─── OWNER CHECK ──────────────────────────────────────────────────────────
     isOwner(chatId) {
         if (!this.config.OWNER_TELEGRAM_ID) return false;
         return String(chatId) === String(this.config.OWNER_TELEGRAM_ID);
+    }
+
+    // Ambil username owner dari Telegram untuk ditampilkan sebagai kontak
+    async _getOwnerContact() {
+        if (this._ownerContactCache) return this._ownerContactCache;
+        try {
+            const chat = await this.bot.getChat(this.config.OWNER_TELEGRAM_ID);
+            if (chat.username) {
+                this._ownerContactCache = `@${chat.username}`;
+            } else {
+                // Tidak punya username, pakai first name saja
+                this._ownerContactCache = chat.first_name || 'Admin';
+            }
+            return this._ownerContactCache;
+        } catch (e) {
+            return null;
+        }
     }
 
     // ─── UPDATE PASSWORD DI .env (OWNER ONLY) ────────────────────────────────
@@ -102,7 +155,7 @@ class TelegramFullController {
     }
 
     setupBotHandlers() {
-        this.bot.onText(/\/start/, (msg) => this.startSecurityFlow(msg.chat.id));
+        this.bot.onText(/\/start/, (msg) => this.startSecurityFlow(msg.chat.id, msg));
         this.bot.onText(/\/menu/, (msg) => this.showMainMenu(msg.chat.id));
         this.bot.onText(/\/status/, (msg) => this.sendBotStatus(msg.chat.id));
 
@@ -114,13 +167,94 @@ class TelegramFullController {
     // SECURITY & AUTHENTICATION FLOW
     // ===================================
 
-    async startSecurityFlow(chatId) {
+    async startSecurityFlow(chatId, msg = null) {
+        // ── Cek username Telegram — wajib ada ──
+        const username = msg?.from?.username || '';
+        const firstName = msg?.from?.first_name || '';
+
+        if (!username) {
+            // Ambil kontak admin
+            const ownerContact = this.config.OWNER_TELEGRAM_ID
+                ? await this._getOwnerContact()
+                : null;
+            const contactLine = ownerContact
+                ? `\n\n👤 Hubungi admin: ${ownerContact}`
+                : '\n\n👤 Hubungi admin untuk informasi lebih lanjut.';
+
+            this.bot.sendMessage(chatId,
+                `🚫 *Akses Ditolak*\n\n` +
+                `Kamu belum memiliki *username Telegram*.\n\n` +
+                `Cara set username:\n` +
+                `Telegram → Settings → Username → isi username kamu\n\n` +
+                `Setelah diset, ketuk /start lagi.` +
+                contactLine,
+                { parse_mode: 'Markdown' }
+            ).catch(() => { });
+            return;
+        }
+
+        // Register dulu (auto aktif jika baru)
+        const regResult = await registerUserToController(chatId, username, firstName);
+
+        // Kirim notif ke admin controller jika user baru
+        if (regResult && regResult.isNew) {
+            const adminId = this.config.ADMIN_CHAT_ID;
+            if (adminId && this.bot) {
+                this.bot.sendMessage(adminId,
+                    `🔔 *USER BARU LOGIN*\n\n` +
+                    `🆔 Chat ID  : \`${chatId}\`\n` +
+                    `👤 Nama     : ${firstName || '-'}\n` +
+                    `🏷️ Username : ${username ? '@' + username : '-'}\n` +
+                    `📅 Waktu    : ${new Date().toLocaleString('id-ID')}\n\n` +
+                    `_Kelola via Controller Bot → 👥 Kelola User_`,
+                    { parse_mode: 'Markdown' }
+                ).catch(() => { });
+            }
+        }
+
+        // Cek akses
+        const accessResult = await checkUserAccess(chatId);
+
+        if (accessResult && !accessResult.allowed) {
+            // Ambil username owner dari config untuk kontak admin
+            const ownerContact = this.config.OWNER_TELEGRAM_ID
+                ? await this._getOwnerContact()
+                : null;
+            const contactLine = ownerContact
+                ? `\n\n👤 Hubungi admin: ${ownerContact}`
+                : '\n\n👤 Hubungi admin untuk informasi lebih lanjut.';
+
+            let pesan = '🚫 *Akses Ditolak*\n\n';
+            if (accessResult.reason === 'blocked') {
+                pesan += `Akun Anda telah diblokir.${contactLine}`;
+            } else if (accessResult.reason === 'expired') {
+                pesan += `Masa aktif akun Anda telah habis.${contactLine}`;
+            } else {
+                pesan += `Anda tidak memiliki akses ke bot ini.${contactLine}`;
+            }
+            this.bot.sendMessage(chatId, pesan, { parse_mode: 'Markdown' }).catch(() => { });
+            return;
+        }
+
+        // Akses OK — lanjut login biasa
         if (this.userSessions.has(chatId)) {
             this.showMainMenu(chatId);
             return;
         }
 
-        await this.securitySystem.initialize();
+        // initialize() hanya jalan 1x — cegah race condition multi user
+        if (!this._securityInitialized) {
+            if (this._securityInitializing) {
+                // Ada proses initialize() sedang berjalan, tunggu sebentar lalu coba lagi
+                await new Promise(r => setTimeout(r, 1500));
+            } else {
+                this._securityInitializing = true;
+                await this.securitySystem.initialize();
+                this._securityInitialized = true;
+                this._securityInitializing = false;
+            }
+        }
+
         this.showLoginOptions(chatId);
     }
 
