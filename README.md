@@ -2,48 +2,6 @@
 
 Multi-Chain Transfer Bot dengan WalletConnect & MetaMask RPC Inject.
 
-## Struktur Folder
-
-```
-fa-starx-bot/
-├── main.js                          ← Entry point
-├── package.json
-├── .env.example                     ← Template konfigurasi
-│
-├── config/
-│   └── loadConfiguration.js        ← EnvDecryptor + loadConfiguration()
-│
-├── core/
-│   ├── ModernUI.js                  ← UI terminal (banner, box, spinner)
-│   ├── InputHandler.js              ← Wrapper readline
-│   └── TransactionQueue.js         ← Antrian nonce per wallet
-│
-├── auth/
-│   ├── TwoFactorAuth.js             ← TOTP RFC 6238 (Google Authenticator)
-│   └── GitHubPasswordSync.js       ← Login admin/script + GitHub sync
-│
-├── bot/
-│   ├── CryptoAutoTx.js             ← Core bot: wallet, WalletConnect, RPC
-│   └── TelegramFullController.js   ← Handler Telegram Bot lengkap
-│
-├── transfer/
-│   ├── TokenTransfer.js            ← Kirim ERC-20 token
-│   ├── EthTransfer.js              ← Kirim ETH native
-│   └── AutoTokenDetectionManager.js ← Deteksi & forward token otomatis
-│
-├── rpc/
-│   └── MetaMaskRpcServer.js        ← [v19] Custom RPC server untuk MetaMask
-│
-├── utils/
-│   ├── constants.js                ← NETWORK_CONFIG, ERC20_ABI, GAS_CONFIG
-│   ├── validators.js               ← isValidPrivateKey, isValidAddress, sleep
-│   ├── gasOptimizer.js             ← SimpleGasOptimizer + AdvancedTokenDetector
-│   └── secureConfig.js             ← EnhancedSecureConfigManager
-│
-└── modes/
-    └── terminalMode.js             ← runTerminalMode() untuk CLI
-```
-
 ## Instalasi
 
 ```bash
