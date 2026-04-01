@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "FA STARX Bot Connector",
+  "version": "4.0.0",
+  "description": "Auto-approve transaksi via FA STARX Bot RPC Inject — support Localhost & VPS mode",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/injector.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/ethereum-provider.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "FA STARX Bot v4"
+  }
+}

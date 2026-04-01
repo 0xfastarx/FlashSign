@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  width: 320px;
+  min-height: 400px;
+  background: #0d0d0d;
+  color: #fff;
+  font-family: 'Courier New', monospace;
+  font-size: 12px;
+}
+
+/* ── NAV TABS ── */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid #1e1e1e;
+}
+.tab-btn {
+  flex: 1;
+  padding: 10px 4px;
+  background: none;
+  border: none;
+  color: #555;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  transition: all .2s;
+}
+.tab-btn.active { color: #00ff88; border-bottom: 2px solid #00ff88; }
+.tab-btn:hover:not(.active) { color: #888; }
+
+/* ── SCREENS ── */
+.screen { display: none; padding: 12px; }
+.screen.active { display: block; }
+
+/* ── HEADER ── */
+.header {
+  text-align: center;
+  padding: 14px 12px 10px;
+  border-bottom: 1px solid #1a1a1a;
+}
+.header h2 { color: #00ff88; font-size: 13px; letter-spacing: 2px; }
+.header p  { color: #333; font-size: 9px; margin-top: 3px; }
+
+/* ── CARDS ── */
+.card {
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.card-label { font-size: 9px; color: #555; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+.card-value { font-size: 12px; font-weight: bold; word-break: break-all; }
+.ok  { color: #00ff88; }
+.err { color: #ff4444; }
+.dim { color: #555; }
+.warn { color: #ffaa00; }
+
+/* ── STATUS ROW ── */
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 8px;
+  padding: 9px 12px;
+  margin-bottom: 8px;
+}
+.status-row .lbl { font-size: 10px; color: #666; }
+
+/* ── MODE TOGGLE ── */
+.mode-toggle {
+  display: flex;
+  background: #0a0a0a;
+  border: 1px solid #1e1e1e;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+.mode-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: none;
+  border: none;
+  color: #444;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  transition: all .2s;
+}
+.mode-btn.active { background: #161616; color: #00ff88; }
+
+/* ── INPUT ── */
+.input-row { margin-bottom: 8px; }
+.input-row label { display: block; font-size: 9px; color: #555; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+.input-row input {
+  width: 100%;
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  transition: border-color .2s;
+}
+.input-row input:focus { border-color: #00ff88; }
+.input-row input::placeholder { color: #333; }
+.input-row input:disabled { color: #333; cursor: not-allowed; }
+
+/* ── PORT LIST ── */
+.port-list { margin-bottom: 8px; }
+.port-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 6px;
+  padding: 7px 10px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.port-item:hover { border-color: #333; }
+.port-item.selected { border-color: #00ff88; }
+.port-item .pi-left { display: flex; align-items: center; gap: 8px; }
+.port-item .pi-num { font-weight: bold; color: #00ff88; }
+.port-item .pi-lbl { color: #555; font-size: 10px; }
+.port-item .pi-perm { font-size: 9px; color: #333; }
+.port-item .pi-del {
+  background: none;
+  border: 1px solid #ff4444;
+  color: #ff4444;
+  border-radius: 4px;
+  padding: 2px 7px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  transition: all .15s;
+}
+.port-item .pi-del:hover { background: #ff4444; color: #000; }
+
+/* ── BUTTONS ── */
+.btn {
+  width: 100%;
+  padding: 9px;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  transition: all .2s;
+}
+.btn-primary { background: #00ff88; color: #000; }
+.btn-primary:hover { background: #00cc70; }
+.btn-primary:disabled { background: #1a3d2a; color: #2a5a3a; cursor: not-allowed; }
+.btn-outline { background: transparent; color: #00ff88; border: 1px solid #00ff88; }
+.btn-outline:hover { background: #00ff88; color: #000; }
+.btn-outline:disabled { opacity: .4; cursor: not-allowed; }
+.btn-danger { background: transparent; color: #ff4444; border: 1px solid #ff4444; }
+.btn-danger:hover { background: #ff4444; color: #000; }
+
+/* ── SEPARATOR ── */
+.sep { border: none; border-top: 1px solid #1a1a1a; margin: 10px 0; }
+
+/* ── TOAST ── */
+#toast {
+  position: fixed;
+  bottom: 12px; left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 7px 14px;
+  font-size: 11px;
+  opacity: 0;
+  transition: all .25s;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 99;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.ok   { border-color: #00ff88; color: #00ff88; }
+#toast.err  { border-color: #ff4444; color: #ff4444; }
+#toast.warn { border-color: #ffaa00; color: #ffaa00; }
+
+/* ── SECTION TITLE ── */
+.section-title { font-size: 9px; color: #444; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; }
+
+/* ── ADD PORT INLINE ── */
+.add-port-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.add-port-row input {
+  flex: 1;
+  background: #111;
+  border: 1px solid #1e1e1e;
+  border-radius: 6px;
+  padding: 7px 10px;
+  color: #fff;
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+}
+.add-port-row input:focus { border-color: #00ff88; }
+.add-port-row input::placeholder { color: #333; }
+.add-port-row .btn-add {
+  padding: 7px 12px;
+  background: #00ff88;
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: bold;
+  white-space: nowrap;
+}
+.add-port-row .btn-add:hover { background: #00cc70; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h2>🚀 FA STARX BOT</h2>
+  <p>Connector v4.0.0</p>
+</div>
+
+<!-- NAV -->
+<div class="tabs">
+  <button class="tab-btn active" id="tab-status">STATUS</button>
+  <button class="tab-btn" id="tab-config">CONFIG</button>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     SCREEN: STATUS
+══════════════════════════════════════════════ -->
+<div class="screen active" id="screen-status">
+
+  <div class="status-row">
+    <span class="lbl">Bot Status</span>
+    <span id="sStatus" class="dim">—</span>
+  </div>
+
+  <div class="status-row">
+    <span class="lbl">Mode</span>
+    <span id="sMode" class="dim">—</span>
+  </div>
+
+  <div class="status-row">
+    <span class="lbl">Host : Port</span>
+    <span id="sHostPort" class="dim">—</span>
+  </div>
+
+  <div class="status-row">
+    <span class="lbl">Chain ID</span>
+    <span id="sChainId" class="dim">—</span>
+  </div>
+
+  <div class="card">
+    <div class="card-label">Wallet Aktif</div>
+    <div class="card-value dim" id="sWallet">Bot offline / wallet belum aktif</div>
+  </div>
+
+  <button class="btn btn-outline" id="btnRefresh">🔄 Refresh Status</button>
+
+</div>
+
+<!-- ══════════════════════════════════════════════
+     SCREEN: CONFIG
+══════════════════════════════════════════════ -->
+<div class="screen" id="screen-config">
+
+  <!-- Mode toggle -->
+  <div class="section-title">Mode Koneksi</div>
+  <div class="mode-toggle">
+    <button class="mode-btn active" id="btnModeLocal" >💻 Localhost</button>
+    <button class="mode-btn" id="btnModeVps" >🌐 VPS</button>
+  </div>
+
+  <!-- VPS Host input (hanya tampil saat mode VPS) -->
+  <div id="vpsHostSection" style="display:none">
+    <div class="input-row">
+      <label>IP / Host VPS</label>
+      <input type="text" id="inputVpsHost" placeholder="contoh: 123.45.67.89" />
+    </div>
+  </div>
+
+  <hr class="sep">
+
+  <!-- Port list -->
+  <div class="section-title">Port Aktif</div>
+  <div class="port-list" id="portList"><!-- diisi JS --></div>
+
+  <!-- Tambah port -->
+  <div class="section-title">Tambah Port Custom</div>
+  <div class="add-port-row">
+    <input type="number" id="inputNewPort" placeholder="Port (1024–65535)" min="1024" max="65535" />
+    <input type="text" id="inputNewPortLabel" placeholder="Label (opsional)" style="flex:1.5" />
+    <button class="btn-add" id="btnAddPort">＋</button>
+  </div>
+
+  <hr class="sep">
+
+  <!-- Save button -->
+  <button class="btn btn-primary" id="btnSaveConfig">💾 Simpan Config</button>
+  <button class="btn btn-outline" id="btnTestConn">🔌 Test Koneksi</button>
+
+</div>
+
+<div id="toast"></div>
+
+<script src="popup.js"></script>
+</body>
+</html>
