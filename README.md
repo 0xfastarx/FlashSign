@@ -5,7 +5,7 @@ Multi-Chain Transfer Bot dengan WalletConnect & MetaMask RPC Inject.
 ## Instalasi
 
 ```bash
-npm install
+npm install ethers@^6.10.0 @walletconnect/sign-client@^2.14.1 node-telegram-bot-api@^0.64.0 node-os-utils systeminformation
 ```
 
 ## Konfigurasi
