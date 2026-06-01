@@ -1410,7 +1410,8 @@ class CryptoAutoTx {
             this.isConnected = false;
             this.session = null;
             if (this.bot && this.sessionNotificationChatId) {
-                this.bot.sendMessage(this.sessionNotificationChatId, `🔴 [${this.sessionId}] WALLETCONNECT DISCONNECTED`);
+                this.bot.sendMessage(this.sessionNotificationChatId, `🔴 [${this.sessionId}] WALLETCONNECT DISCONNECTED`)
+                    .catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
         });
     }
@@ -1447,7 +1448,8 @@ class CryptoAutoTx {
 
             if (this.bot && this.sessionNotificationChatId && this.executionDelay > 2) {
                 this.bot.sendMessage(this.sessionNotificationChatId,
-                    `⏳ [${this.sessionId}] Menunggu ${this.executionDelay} detik sebelum ${actionName}...`);
+                    `⏳ [${this.sessionId}] Menunggu ${this.executionDelay} detik sebelum ${actionName}...`)
+                    .catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
 
             await new Promise(resolve => setTimeout(resolve, this.executionDelay * 1000));
@@ -1490,7 +1492,7 @@ class CryptoAutoTx {
                     `⚙️ Auto-Save RPC: ${this.autoSaveRpc ? 'ON' : 'OFF'}\n` +
                     `⏱️ Delay Mode: ${this.executionDelay}s\n` +
                     `🤖 Bot siap auto-approve transaksi!`
-                );
+                ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
         } catch (error) {
             console.log(`[Session ${this.sessionId}] Error approving session:`, error.message);
@@ -1627,7 +1629,7 @@ class CryptoAutoTx {
                         `🌐 RPC: ${this.currentRpcName}\n` +
                         `⏱️ Delay Used: ${this.executionDelay}s\n` +
                         `🕒 ${new Date().toLocaleString()}`
-                    );
+                    ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
                 }
             } else {
                 console.log(`[Session ${this.sessionId}] Respon sukses dikirim untuk method: ${method}`);
@@ -1655,7 +1657,7 @@ class CryptoAutoTx {
                     `⛓️ Chain: ${this.currentChainId}\n` +
                     `🌐 RPC: ${this.currentRpcName}\n` +
                     `🕒 ${new Date().toLocaleString()}`
-                );
+                ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
         }
     }
@@ -1669,7 +1671,7 @@ class CryptoAutoTx {
             if (this.bot && this.sessionNotificationChatId) {
                 this.bot.sendMessage(this.sessionNotificationChatId,
                     `⏳ [${this.sessionId}] TX MASUK ANTRIAN\n\nAda transaksi sebelumnya yang sedang diproses.\nTransaksi ini akan dieksekusi otomatis setelah selesai.\n💳 ${walletAddress}\n⛓️ Chain: ${chainId}`
-                );
+                ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
         }
         return globalTxQueue.enqueue(walletAddress, chainId, this.sessionId, async () => {
@@ -1865,7 +1867,7 @@ class CryptoAutoTx {
                 this.bot.sendMessage(this.sessionNotificationChatId,
                     `⚠️ [${this.sessionId}] PERMINTAAN GANTI RPC DIABAIKAN\n\n` +
                     `DApp meminta menambahkan jaringan baru, tetapi Auto-Save RPC sedang OFF.`
-                );
+                ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
             throw new Error("User rejected the request (Auto-Save RPC is disabled).");
         }
@@ -1903,7 +1905,7 @@ class CryptoAutoTx {
                     `🔄 [${this.sessionId}] RPC OTOMATIS DISIMPAN\n\n` +
                     `Nama: ${newRpc.name}\n` +
                     `Chain ID: ${newRpc.chainId}`
-                );
+                ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
             }
 
             if (this.session && this.session.topic) {
@@ -1968,7 +1970,7 @@ class CryptoAutoTx {
                             `🔄 [${this.sessionId}] RPC DIGANTI\n\n` +
                             `Nama: ${foundRpc.name}\n` +
                             `Chain ID: ${foundRpc.chainId}`
-                        );
+                        ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
                     }
                 } else {
                     console.log(`[Session ${this.sessionId}] RPC untuk Chain ID ${chainIdNum} tidak ditemukan.`);
@@ -2114,7 +2116,7 @@ class CryptoAutoTx {
                 `Wallet: ${this.wallet.address}\n` +
                 `Chain: ${this.currentChainId}\n` +
                 `Auto-Save RPC: ${this.autoSaveRpc ? 'ON' : 'OFF'}`
-            );
+            ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
         }
 
         this.keepAlive();

@@ -10,6 +10,14 @@
 const dotenv = require('dotenv');
 dotenv.config({ override: true });
 
+// Global safety net — mencegah bot mati total akibat error tak terduga
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ [Global] Unhandled Promise Rejection:', reason?.message || reason);
+});
+process.on('uncaughtException', (error) => {
+    console.error('⚠️ [Global] Uncaught Exception:', error?.message || error);
+});
+
 const readline = require('readline');
 const { loadConfiguration } = require('./config/loadConfiguration');
 const ModernUI = require('./core/ModernUI');

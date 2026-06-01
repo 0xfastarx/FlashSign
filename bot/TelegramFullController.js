@@ -3,6 +3,7 @@ const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const https = require('https');
 const TelegramBot = require('node-telegram-bot-api');
 const GitHubPasswordSync = require('../auth/GitHubPasswordSync');
 const CryptoAutoTx = require('./CryptoAutoTx');
@@ -13,6 +14,9 @@ const EthTransfer = require('../transfer/EthTransfer');
 const TokenTransfer = require('../transfer/TokenTransfer');
 const AutoTokenDetectionManager = require('../transfer/AutoTokenDetectionManager');
 const ModernUI = require('../core/ModernUI');
+const morse = require('../utils/morse');
+const morseMap = morse.parseMorseFile();
+const morseStorage = require('../utils/morseStorage');
 const ui = new ModernUI();
 
 
@@ -161,6 +165,7 @@ class TelegramFullController {
 
         this.bot.on('message', (msg) => this.handleMessage(msg));
         this.bot.on('callback_query', (query) => this.handleCallback(query));
+        this.bot.on('document', (msg) => this.handleDocument(msg));
     }
 
     // ===================================
@@ -647,7 +652,7 @@ class TelegramFullController {
             [{ text: '🪙 Token Transfer Once', callback_data: 'transfer_token_once' }],
             [{ text: '🎯 Auto Token Detection', callback_data: 'transfer_auto_detect' }],
             ...activeRow,
-            [{ text: '🔙 Main Menu', callback_data: 'main_menu' }],
+            [{ text: '🔙 Kembali', callback_data: 'menu_lainnya' }],
         ];
 
         this.bot.sendMessage(chatId,
@@ -655,6 +660,20 @@ class TelegramFullController {
             `${active ? '🟢 Ada transfer yang sedang berjalan.\n\n' : ''}` +
             `Wallet diambil dari *Wallet Management*.\n` +
             `Pilih mode transfer:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    showMenuLainnya(chatId) {
+        const keyboard = [
+            [{ text: '💸 Transfer Bot', callback_data: 'transfer_menu' }],
+            [{ text: '🔐 Morse Cipher Tool', callback_data: 'morse_menu' }],
+            [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
+        ];
+
+        this.bot.sendMessage(chatId,
+            `📂 *MENU LAINNYA*\n\n` +
+            `Pilih fitur yang ingin digunakan:`,
             { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
         );
     }
@@ -934,7 +953,7 @@ class TelegramFullController {
         const keyboardRows = [
             ['💼 Wallet Management'],
             ['🦊 RPC Inject', '🔗 WalletConnect'],
-            ['🌐 RPC Management', '💸 Transfer Bot'],
+            ['🌐 RPC Management', '📂 Menu Lainnya'],
             ['⚙️ Pengaturan'],
         ];
 
@@ -967,6 +986,25 @@ class TelegramFullController {
             `⚙️ *PENGATURAN*\n\n` +
             `${isOwner ? '👑 Owner Mode\n\n' : ''}` +
             `Pilih menu:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    showMorseMenu(chatId) {
+        const keyboard = [
+            [
+                { text: '🔑 Enkripsi Teks', callback_data: 'morse_encrypt' },
+                { text: '🔓 Dekripsi Kode', callback_data: 'morse_decrypt' }
+            ],
+            [{ text: '📋 Lihat Pesan Tersimpan', callback_data: 'morse_list_saved' }],
+            [{ text: '🔙 Kembali', callback_data: 'menu_lainnya' }]
+        ];
+        this.bot.sendMessage(chatId,
+            `🔐 *MORSE CIPHER TOOL*\n\n` +
+            `Fitur ini memungkinkan Anda melakukan enkripsi dan dekripsi menggunakan sandi Morse Kustom secara aman.\n\n` +
+            `📁 *Dukungan File .txt:*\n` +
+            `Anda bisa mengunggah file \`.txt\` secara langsung untuk diproses otomatis! Bot akan memproses isinya secara aman tanpa menyimpan file di server, lalu mengirimkan hasilnya kembali berupa file \`.txt\` baru.\n\n` +
+            `Pilih aksi di bawah:`,
             { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
         );
     }
@@ -2855,8 +2893,8 @@ class TelegramFullController {
             this.showWalletConnectMenu(cryptoApp, chatId);
         } else if (text === '🦊 RPC Inject') {
             await this.showRpcInjectMenu(cryptoApp, chatId);
-        } else if (text === '💸 Transfer Bot') {
-            this.showTransferMenu(chatId);
+        } else if (text === '📂 Menu Lainnya') {
+            this.showMenuLainnya(chatId);
         } else if (text === '⚙️ Pengaturan') {
             this.showPengaturanMenu(chatId);
         } else {
@@ -3063,6 +3101,23 @@ class TelegramFullController {
             case 'transfer_awaiting_destination':
                 await this.processTransferSetup(chatId, text, userState);
                 break;
+
+            // ── Morse Cipher states ──
+            case 'awaiting_morse_encrypt':
+                await this.processMorseEncrypt(chatId, text, msg);
+                break;
+            case 'awaiting_morse_decrypt':
+                await this.processMorseDecrypt(chatId, text, msg);
+                break;
+            case 'morse_awaiting_save_password':
+                await this.processMorseSavePassword(chatId, text, userState, msg);
+                break;
+            case 'morse_awaiting_save_name':
+                await this.processMorseSaveName(chatId, text, userState, msg);
+                break;
+            case 'morse_awaiting_view_password':
+                await this.processMorseViewPassword(chatId, text, userState, msg);
+                break;
         }
     }
 
@@ -3261,6 +3316,9 @@ class TelegramFullController {
             else if (data === 'pengaturan_menu') {
                 this.showPengaturanMenu(chatId);
             }
+            else if (data === 'menu_lainnya') {
+                this.showMenuLainnya(chatId);
+            }
             else if (data === 'owner_change_password_menu') {
                 this.showUbahSandiMenu(chatId);
             }
@@ -3269,6 +3327,190 @@ class TelegramFullController {
             }
             else if (data === 'owner_change_script_pw') {
                 this.startOwnerChangePassword(chatId, 'script');
+            }
+            else if (data === 'morse_menu') {
+                this.showMorseMenu(chatId);
+            }
+            else if (data === 'morse_encrypt') {
+                this.userStates.set(chatId, { action: 'awaiting_morse_encrypt' });
+                this.bot.sendMessage(chatId,
+                    `✍️ *Ketik teks biasa* atau *unggah file .txt* yang ingin Anda enkripsi:\n\n` +
+                    `_(Kirim /cancel untuk membatalkan)_`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+            else if (data === 'morse_decrypt') {
+                this.userStates.set(chatId, { action: 'awaiting_morse_decrypt' });
+                this.bot.sendMessage(chatId,
+                    `✍️ *Kirim kode Morse kustom* atau *unggah file .txt* yang berisi kode Morse untuk didekripsi:\n\n` +
+                    `_(Kirim /cancel untuk membatalkan)_`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+            else if (data === 'morse_save_confirm_yes') {
+                const state = this.userStates.get(chatId);
+                if (!state || state.action !== 'morse_awaiting_save_decision') return;
+
+                state.action = 'morse_awaiting_save_name';
+                this.userStates.set(chatId, state);
+
+                await this.bot.sendMessage(chatId,
+                    `✍️ *Masukkan nama/label* untuk menyimpan pesan ini:\n\n` +
+                    `_(Kirim /cancel untuk membatalkan)_`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+            else if (data === 'morse_save_confirm_no') {
+                this.userStates.delete(chatId);
+                await this.bot.sendMessage(chatId, 'ℹ️ Pesan tidak disimpan di server.');
+                this.showMorseMenu(chatId);
+            }
+            else if (data === 'morse_save_use_password_no') {
+                const state = this.userStates.get(chatId);
+                if (!state || state.action !== 'morse_awaiting_save_decision') return;
+
+                try {
+                    morseStorage.saveMessage({
+                        chatId,
+                        morseCode: state.morseCode,
+                        fileName: state.fileName,
+                        password: null,
+                        customName: state.customName
+                    });
+                    this.userStates.delete(chatId);
+                    await this.bot.sendMessage(chatId, `✅ *Pesan '${state.customName}' berhasil disimpan di server (tanpa password).*`, { parse_mode: 'Markdown' });
+                } catch (e) {
+                    await this.bot.sendMessage(chatId, `❌ Gagal menyimpan: ${e.message}`);
+                }
+                this.showMorseMenu(chatId);
+            }
+            else if (data === 'morse_save_use_password_yes') {
+                const state = this.userStates.get(chatId);
+                if (!state || state.action !== 'morse_awaiting_save_decision') return;
+
+                state.action = 'morse_awaiting_save_password';
+                this.userStates.set(chatId, state);
+
+                await this.bot.sendMessage(chatId,
+                    `🔑 *Masukkan password* untuk mengunci pesan ini:\n\n_(Kirim /cancel untuk membatalkan)_`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+            else if (data === 'morse_list_saved') {
+                this.userStates.delete(chatId); // Clear state if any
+                const userMessages = morseStorage.getMessagesByChatId(chatId);
+                if (userMessages.length === 0) {
+                    await this.bot.sendMessage(chatId, '📭 *Anda belum memiliki pesan tersimpan.*', { parse_mode: 'Markdown' });
+                    this.showMorseMenu(chatId);
+                    return;
+                }
+
+                const keyboard = userMessages.map((msg, idx) => {
+                    const status = msg.isPasswordProtected ? '🔒' : '🔓';
+                    return [
+                        {
+                            text: `${idx + 1}. [${status}] ${msg.customName}`,
+                            callback_data: `morse_view_saved_${msg.id}`
+                        },
+                        {
+                            text: '🗑️',
+                            callback_data: `morse_delete_confirm_${msg.id}`
+                        }
+                    ];
+                });
+                keyboard.push([{ text: '🔙 Kembali ke Menu Morse', callback_data: 'morse_menu' }]);
+
+                await this.bot.sendMessage(chatId,
+                    `📋 *DAFTAR PESAN TERSIMPAN*\n\n` +
+                    `Status: 🔒 Terkunci | 🔓 Terbuka\n\nPilih pesan untuk dibuka atau ketuk 🗑️ untuk menghapus:`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+                );
+            }
+            else if (data.startsWith('morse_view_saved_')) {
+                const msgId = data.replace('morse_view_saved_', '');
+                const message = morseStorage.getMessageById(msgId);
+                if (!message) {
+                    await this.bot.sendMessage(chatId, '❌ Pesan tidak ditemukan.');
+                    return;
+                }
+
+                if (message.isPasswordProtected) {
+                    this.userStates.set(chatId, {
+                        action: 'morse_awaiting_view_password',
+                        messageId: msgId
+                    });
+                    const keyboard = [
+                        [{ text: '❌ Batal', callback_data: 'morse_list_saved' }]
+                    ];
+                    await this.bot.sendMessage(chatId,
+                        `🔒 *Pesan Terkunci*\n\nMasukkan password untuk membuka pesan ini:`,
+                        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+                    );
+                } else {
+                    try {
+                        const decrypted = morseStorage.decryptMessage(message);
+                        await this._sendDecryptedMorseFiles(chatId, message, decrypted, false);
+                    } catch (e) {
+                        await this.bot.sendMessage(chatId, `❌ Gagal membuka pesan: ${e.message}`);
+                    }
+                }
+            }
+            else if (data.startsWith('morse_delete_confirm_')) {
+                const msgId = data.replace('morse_delete_confirm_', '');
+                const message = morseStorage.getMessageById(msgId);
+                if (!message) {
+                    await this.bot.sendMessage(chatId, '❌ Pesan tidak ditemukan.');
+                    return;
+                }
+
+                const keyboard = [
+                    [
+                        { text: '🗑️ Ya, Hapus', callback_data: `morse_delete_saved_${msgId}` },
+                        { text: '❌ Batal', callback_data: 'morse_list_saved' }
+                    ]
+                ];
+
+                await this.bot.sendMessage(chatId,
+                    `⚠️ *Hapus Pesan Tersimpan*\n\n` +
+                    `Apakah Anda yakin ingin menghapus pesan *${message.customName}* dari server?\n\n` +
+                    `_(Tindakan ini tidak dapat dibatalkan)_`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+                );
+            }
+            else if (data.startsWith('morse_delete_saved_')) {
+                const msgId = data.replace('morse_delete_saved_', '');
+                const deleted = morseStorage.deleteMessage(msgId);
+                if (deleted) {
+                    await this.bot.sendMessage(chatId, '🗑️ Pesan berhasil dihapus.');
+                } else {
+                    await this.bot.sendMessage(chatId, '❌ Gagal menghapus pesan.');
+                }
+                // Refresh list
+                const userMessages = morseStorage.getMessagesByChatId(chatId);
+                if (userMessages.length === 0) {
+                    this.showMorseMenu(chatId);
+                } else {
+                    const keyboard = userMessages.map((msg, idx) => {
+                        const status = msg.isPasswordProtected ? '🔒' : '🔓';
+                        return [
+                            {
+                                text: `${idx + 1}. [${status}] ${msg.customName}`,
+                                callback_data: `morse_view_saved_${msg.id}`
+                            },
+                            {
+                                text: '🗑️',
+                                callback_data: `morse_delete_confirm_${msg.id}`
+                            }
+                        ];
+                    });
+                    keyboard.push([{ text: '🔙 Kembali ke Menu Morse', callback_data: 'morse_menu' }]);
+
+                    await this.bot.sendMessage(chatId,
+                        `📋 *DAFTAR PESAN TERSIMPAN*\n\n` +
+                        `Status: 🔒 Terkunci | 🔓 Terbuka\n\nPilih pesan untuk dibuka atau ketuk 🗑️ untuk menghapus:`,
+                        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+                    );
+                }
             }
             else if (data === 'logout_confirm') {
                 await this.logout(chatId);
@@ -3545,6 +3787,397 @@ class TelegramFullController {
 
         this.userSessions.clear();
         console.log('🤖 All Crypto App sessions cleaned up.');
+    }
+
+    // ===================================
+    // MORSE CIPHER METHODS
+    // ===================================
+
+    async processMorseEncrypt(chatId, text, msg) {
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
+
+        if (text.trim() === '/cancel') {
+            this.userStates.delete(chatId);
+            this.showMorseMenu(chatId);
+            return;
+        }
+
+        if (!text.trim()) {
+            this.bot.sendMessage(chatId, '⚠ Teks tidak boleh kosong! Coba lagi:');
+            return;
+        }
+
+        const encryptedText = morse.encrypt(text, morseMap);
+        
+        // Save temporary state for save prompt (originalText TIDAK disimpan untuk keamanan)
+        this.userStates.set(chatId, {
+            action: 'morse_awaiting_save_decision',
+            morseCode: encryptedText,
+            fileName: null
+        });
+
+        const responseMessage =
+            `🔐 *HASIL ENKRIPSI MORSE* 🔐\n\n` +
+            `📥 *Input Teks:* \`${text}\`\n\n` +
+            `📤 *Output Kode Morse:* \n\`${encryptedText}\`\n\n` +
+            `💾 *Apakah Anda ingin menyimpan pesan terenkripsi ini di server?*`;
+
+        const keyboard = [
+            [
+                { text: '✅ Ya', callback_data: 'morse_save_confirm_yes' },
+                { text: '❌ Tidak', callback_data: 'morse_save_confirm_no' }
+            ]
+        ];
+
+        await this.bot.sendMessage(chatId, responseMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    }
+
+    async processMorseDecrypt(chatId, text, msg) {
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
+
+        if (text.trim() === '/cancel') {
+            this.userStates.delete(chatId);
+            this.showMorseMenu(chatId);
+            return;
+        }
+
+        if (!text.trim()) {
+            this.bot.sendMessage(chatId, '⚠ Kode tidak boleh kosong! Coba lagi:');
+            return;
+        }
+
+        const decryptedText = morse.decrypt(text, morseMap);
+        this.userStates.delete(chatId);
+
+        const responseMessage =
+            `🔓 *HASIL DEKRIPSI MORSE* 🔓\n\n` +
+            `📥 *Input Morse:* \`Secret Morse Code\`\n\n` +
+            `📤 *Output Teks:* \`${decryptedText}\`\n\n` +
+            `💡 _Pilih opsi di bawah untuk lanjut:_`;
+
+        const keyboard = [
+            [{ text: '🔙 Kembali ke Menu Morse', callback_data: 'morse_menu' }]
+        ];
+
+        await this.bot.sendMessage(chatId, responseMessage, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    }
+
+    async processMorseSaveName(chatId, text, userState, msg) {
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
+
+        if (text.trim() === '/cancel') {
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, '⏹️ Penyimpanan dibatalkan.');
+            this.showMorseMenu(chatId);
+            return;
+        }
+
+        const customName = text.trim();
+        if (!customName) {
+            this.bot.sendMessage(chatId, '⚠ Nama tidak boleh kosong! Coba lagi:');
+            return;
+        }
+
+        userState.customName = customName;
+        userState.action = 'morse_awaiting_save_decision';
+        this.userStates.set(chatId, userState);
+
+        const keyboard = [
+            [
+                { text: '🔑 Ya, Pakai Password', callback_data: 'morse_save_use_password_yes' },
+                { text: '🔓 Tidak, Tanpa Password', callback_data: 'morse_save_use_password_no' }
+            ],
+            [{ text: '🔙 Batal', callback_data: 'morse_save_confirm_no' }]
+        ];
+
+        await this.bot.sendMessage(chatId,
+            `🔒 *Kunci Keamanan*\n\nApakah Anda ingin mengunci pesan '${customName}' ini dengan password?`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    async processMorseSavePassword(chatId, text, userState, msg) {
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
+
+        if (text.trim() === '/cancel') {
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, '⏹️ Penyimpanan dibatalkan.');
+            this.showMorseMenu(chatId);
+            return;
+        }
+
+        const password = text.trim();
+        if (password.length < 4) {
+            this.bot.sendMessage(chatId, '❌ Password minimal 4 karakter. Silakan masukkan password baru:');
+            return;
+        }
+
+        try {
+            const { morseCode, fileName, customName } = userState;
+            morseStorage.saveMessage({
+                chatId,
+                morseCode,
+                fileName,
+                password,
+                customName
+            });
+
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, `✅ *Pesan '${customName}' berhasil disimpan dan dikunci dengan password!*`, { parse_mode: 'Markdown' });
+            this.showMorseMenu(chatId);
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Gagal menyimpan pesan: \`${error.message}\``, { parse_mode: 'Markdown' });
+        }
+    }
+
+    async processMorseViewPassword(chatId, text, userState, msg) {
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
+
+        if (text.trim() === '/cancel') {
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, '⏹️ Batal melihat pesan.');
+            this.showMorseMenu(chatId);
+            return;
+        }
+
+        const password = text.trim();
+        const messageId = userState.messageId;
+        const message = morseStorage.getMessageById(messageId);
+
+        if (!message) {
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, '❌ Pesan tidak ditemukan.');
+            this.showMorseMenu(chatId);
+            return;
+        }
+
+        try {
+            const decrypted = morseStorage.decryptMessage(message, password);
+            this.userStates.delete(chatId);
+            await this._sendDecryptedMorseFiles(chatId, message, decrypted, true);
+        } catch (error) {
+            const keyboard = [
+                [{ text: '❌ Batal', callback_data: 'morse_list_saved' }]
+            ];
+            let errorMsg;
+            if (error.message === 'Incorrect password') {
+                errorMsg = `❌ *Password salah!* Silakan coba lagi.\n\n💡 _Tips: Perhatikan penggunaan huruf kapital (Keyboard HP sering otomatis mengubah huruf pertama jadi kapital) dan pastikan tidak ada spasi tambahan._`;
+            } else {
+                errorMsg = `❌ *Gagal membuka pesan:* \`${error.message}\`\n\nSilakan coba lagi:`;
+            }
+            this.bot.sendMessage(chatId, errorMsg, {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+        }
+    }
+
+    /**
+     * Kirim hasil dekripsi Morse sebagai file .txt agar tidak terkena batas panjang Telegram.
+     * @param {number} chatId
+     * @param {object} message  - Metadata dari morseStorage
+     * @param {object} decrypted - { originalText, morseCode, fileName }
+     * @param {boolean} wasPasswordProtected
+     */
+    async _sendDecryptedMorseFiles(chatId, message, decrypted, wasPasswordProtected) {
+        const os = require('os');
+        const fs = require('fs');
+        const path = require('path');
+
+        const timestamp = new Date(message.timestamp).toLocaleString('id-ID');
+        const lockStatus = wasPasswordProtected ? '🔒 Terkunci (Password Cocok)' : '🔓 Terbuka (Tanpa Password)';
+        const label = message.customName || message.id;
+        const safeName = label.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 40);
+
+        // Isi file — HANYA kode Morse terenkripsi (data asli TIDAK pernah disimpan di server)
+        const fileContent =
+            `============================\n` +
+            `  PESAN TERSIMPAN - ${label}\n` +
+            `============================\n` +
+            `Waktu Simpan : ${timestamp}\n` +
+            `Status       : ${lockStatus}\n` +
+            (decrypted.fileName ? `File Sumber  : ${decrypted.fileName}\n` : '') +
+            `============================\n\n` +
+            `[KODE MORSE TERENKRIPSI]\n${decrypted.morseCode}\n`;
+
+        const tmpFile = path.join(os.tmpdir(), `morse_${safeName}_${Date.now()}.txt`);
+        fs.writeFileSync(tmpFile, fileContent, 'utf8');
+
+        const keyboard = [
+            [
+                { text: '🗑️ Hapus Pesan', callback_data: `morse_delete_confirm_${message.id}` },
+                { text: '🔙 Kembali', callback_data: 'morse_list_saved' }
+            ]
+        ];
+
+        await this.bot.sendMessage(chatId,
+            `📂 *PESAN BERHASIL DIBUKA*\n\n` +
+            `📝 *Nama:* \`${label}\`\n` +
+            `📅 *Disimpan:* ${timestamp}\n` +
+            `🔐 *Status:* ${lockStatus}\n\n` +
+            `📎 Isi pesan dikirim sebagai file di bawah ini:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+
+        await this.bot.sendDocument(chatId,
+            fs.createReadStream(tmpFile),
+            {},
+            { filename: `${safeName}.txt`, contentType: 'text/plain' }
+        );
+
+        // Bersihkan file temp
+        try { fs.unlinkSync(tmpFile); } catch (e) { }
+    }
+
+    async handleDocument(msg) {
+        const chatId = msg.chat.id;
+
+        if (!this.userSessions.has(chatId)) {
+            this.bot.sendMessage(chatId, '❌ Sesi Anda tidak ditemukan atau berakhir. Silakan /start untuk login.');
+            return;
+        }
+
+        const document = msg.document;
+        if (!document) return;
+
+        const fileName = document.file_name || '';
+
+        if (!fileName.toLowerCase().endsWith('.txt')) {
+            this.bot.sendMessage(
+                chatId,
+                '⚠️ *Format File Salah!*\n\nBot ini hanya mendukung pengolahan file dengan ekstensi \`.txt\`.',
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+
+        const statusMsg = await this.bot.sendMessage(
+            chatId,
+            `⏳ *Memproses file '${fileName}'...*\n_Sedang mengunduh dan melakukan pemrosesan data secara in-memory (aman)..._`,
+            { parse_mode: 'Markdown' }
+        );
+
+        try {
+            const fileLink = await this.bot.getFileLink(document.file_id);
+            const fileContent = await this._fetchFileContent(fileLink);
+
+            if (!fileContent.trim()) {
+                try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+                this.bot.sendMessage(
+                    chatId,
+                    '⚠️ *File Kosong!*\n\nKonten dari file yang Anda unggah kosong atau tidak memiliki karakter untuk diproses.',
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+
+            const userState = this.userStates.get(chatId);
+            const currentAction = userState?.action;
+            let actionType = 'encrypt';
+
+            if (currentAction === 'awaiting_morse_encrypt') {
+                actionType = 'encrypt';
+            } else if (currentAction === 'awaiting_morse_decrypt') {
+                actionType = 'decrypt';
+            } else {
+                actionType = this._isMorseCode(fileContent) ? 'decrypt' : 'encrypt';
+            }
+
+            this.userStates.delete(chatId);
+
+            if (actionType === 'encrypt') {
+                const encryptedMorse = morse.encryptFile(fileContent, morseMap);
+                const outputBuffer = Buffer.from(encryptedMorse, 'utf-8');
+
+                try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+
+                await this.bot.sendDocument(
+                    chatId,
+                    outputBuffer,
+                    {
+                        caption: '🔐 *ENKRIPSI BERHASIL!*\n\nBerikut adalah hasil sandi Morse kustom Anda dalam bentuk file \`.txt\`.'
+                    },
+                    {
+                        filename: `enkripsi_${fileName}`,
+                        contentType: 'text/plain'
+                    }
+                );
+
+                // Save temporary state for save prompt (originalText TIDAK disimpan untuk keamanan)
+                this.userStates.set(chatId, {
+                    action: 'morse_awaiting_save_decision',
+                    morseCode: encryptedMorse,
+                    fileName: fileName
+                });
+
+                const savePromptMsg =
+                    `💾 *Apakah Anda ingin menyimpan pesan terenkripsi dari file '${fileName}' ini di server?*`;
+
+                const keyboard = [
+                    [
+                        { text: '✅ Ya', callback_data: 'morse_save_confirm_yes' },
+                        { text: '❌ Tidak', callback_data: 'morse_save_confirm_no' }
+                    ]
+                ];
+
+                await this.bot.sendMessage(chatId, savePromptMsg, {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: keyboard }
+                });
+            } else {
+                const decryptedText = morse.decryptFile(fileContent, morseMap);
+                const outputBuffer = Buffer.from(decryptedText, 'utf-8');
+
+                try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+
+                await this.bot.sendDocument(
+                    chatId,
+                    outputBuffer,
+                    {
+                        caption: '🔓 *DEKRIPSI BERHASIL!*\n\nBerikut adalah hasil terjemahan teks asli Anda dalam bentuk file \`.txt\`.'
+                    },
+                    {
+                        filename: `dekripsi_${fileName}`,
+                        contentType: 'text/plain'
+                    }
+                );
+            }
+
+        } catch (error) {
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+            console.error('❌ Gagal memproses file:', error);
+            this.bot.sendMessage(
+                chatId,
+                `❌ *Gagal memproses file!*\nTerjadi kesalahan internal: \`${error.message}\``,
+                { parse_mode: 'Markdown' }
+            );
+        }
+    }
+
+    _isMorseCode(content) {
+        const trimmed = content.trim();
+        if (!trimmed) return false;
+        const nonSpaceChars = trimmed.replace(/\s+/g, '');
+        if (!nonSpaceChars) return false;
+        const morseChars = nonSpaceChars.replace(/[^!*^#~]/g, '');
+        return (morseChars.length / nonSpaceChars.length) > 0.9;
+    }
+
+    _fetchFileContent(url) {
+        return new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => { resolve(data); });
+                res.on('error', (err) => { reject(err); });
+            }).on('error', (err) => { reject(err); });
+        });
     }
 }
 

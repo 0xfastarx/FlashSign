@@ -70,12 +70,11 @@ class EthTransfer {
 
             if (this.telegramNotifier) {
                 await this.telegramNotifier.sendNotification(
-                    `🟢 ETH TRANSFER TERDETEKSI
-
-💰 Amount: ${amountToSendEth.toFixed(8)} ETH
-🌐 Network: ${this.networkName}
-📄 TX Hash: ${tx.hash.slice(0, 10)}...${tx.hash.slice(-8)}
-⏰ Time: ${new Date().toLocaleString()}`
+                    `🟢 ETH TRANSFER TERDETEKSI\n\n` +
+                    `💰 Amount: ${amountToSendEth.toFixed(8)} ETH\n` +
+                    `🌐 Network: ${this.networkName}\n` +
+                    `📄 TX Hash: ${tx.hash.slice(0, 10)}...${tx.hash.slice(-8)}\n` +
+                    `⏰ Time: ${new Date().toLocaleString()}`
                 );
             }
 
@@ -88,29 +87,28 @@ class EthTransfer {
 
             if (this.telegramNotifier) {
                 await this.telegramNotifier.sendNotification(
-                    `🎉 ETH TRANSFER BERHASIL
-
-✅ Status: Confirmed
-💰 Amount: ${amountToSendEth.toFixed(8)} ETH
-🌐 Network: ${this.networkName}
-📄 TX Hash: ${receipt.hash.slice(0, 10)}...${receipt.hash.slice(-8)}
-⏰ Completed: ${new Date().toLocaleString()}`
+                    `🎉 ETH TRANSFER BERHASIL\n\n` +
+                    `✅ Status: Confirmed\n` +
+                    `💰 Amount: ${amountToSendEth.toFixed(8)} ETH\n` +
+                    `🌐 Network: ${this.networkName}\n` +
+                    `📄 TX Hash: ${receipt.hash.slice(0, 10)}...${receipt.hash.slice(-8)}\n` +
+                    `⏰ Completed: ${new Date().toLocaleString()}`
                 );
             }
 
             return { hash: receipt.hash, amount: amountToSendEth, symbol: 'ETH' };
             
         } catch (error) {
-            this.consecutiveErrors++;
             ui.stopLoading();
             
-            if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
-                ui.showNotification('error', `Too many consecutive errors. Stopping bot.`);
-                this.stop();
-                return null;
-            }
+            const errorMsg = error.message || '';
+            const isInsufficientFunds = errorMsg.toLowerCase().includes('insufficient funds') || 
+                                        errorMsg.toLowerCase().includes('intrinsic transaction cost') ||
+                                        error.code === 'INSUFFICIENT_FUNDS';
 
-            if (error.message.includes('nonce') || error.message.includes('NONCE_EXPIRED')) {
+            if (isInsufficientFunds) {
+                ui.showNotification('warning', 'Saldo tidak cukup untuk membayar gas fee. Menunggu refill...');
+            } else if (errorMsg.includes('nonce') || errorMsg.includes('NONCE_EXPIRED')) {
                 ui.showNotification('warning', 'Nonce error detected. Clearing cache...');
                 this.gasOptimizer.clearNonceCache(this.wallet.address);
                 await sleep(2000);
@@ -128,8 +126,12 @@ class EthTransfer {
             const minBalanceWei = ethers.parseEther(GAS_CONFIG.MIN_ETH_BALANCE.toString());
             const ethBalance = parseFloat(ethers.formatEther(rawBalance));
             
-            if (rawBalance <= minBalanceWei) {
-                ui.startLoading(`Monitoring ETH - Balance: ${ethBalance.toFixed(8)} ETH`);
+            const gasCost = await this.gasOptimizer.calculateTransactionCost(GAS_CONFIG.GAS_LIMIT);
+            const requiredMinWei = minBalanceWei + gasCost.gasCostWei;
+            
+            if (rawBalance <= requiredMinWei) {
+                const requiredMinEth = parseFloat(ethers.formatEther(requiredMinWei));
+                ui.startLoading(`Monitoring ETH - Balance: ${ethBalance.toFixed(8)} ETH (Needs: > ${requiredMinEth.toFixed(6)} ETH)`);
                 this.lastBalance = rawBalance;
                 this.consecutiveErrors = 0;
                 return;
@@ -137,19 +139,22 @@ class EthTransfer {
 
             // Kirim jika: lastBalance kosong/kecil ATAU ada saldo baru masuk (refill)
             const lastBalWei = this.lastBalance || 0n;
-            if (rawBalance > minBalanceWei && (lastBalWei <= minBalanceWei || rawBalance > lastBalWei)) {
-                await this.sendEth(toAddress);
+            if (rawBalance > requiredMinWei && (lastBalWei <= requiredMinWei || rawBalance > lastBalWei)) {
+                const result = await this.sendEth(toAddress);
+                if (result) {
+                    this.lastBalance = rawBalance;
+                } else {
+                    // Reset agar dicoba kembali
+                    this.lastBalance = 0n;
+                }
+            } else {
+                this.lastBalance = rawBalance;
             }
             
-            this.lastBalance = rawBalance;
+            this.consecutiveErrors = 0;
             
         } catch (error) {
-            this.consecutiveErrors++;
-            if (this.consecutiveErrors >= this.maxConsecutiveErrors) {
-                ui.showNotification('error', `Too many monitoring errors. Stopping bot.`);
-                this.stop();
-                return;
-            }
+            ui.showNotification('warning', `Monitoring ETH error: ${error.message}`);
             ui.startLoading('Monitoring ETH - Checking balance...');
         }
     }

@@ -1,0 +1,45 @@
+{
+  "currentRpc": "https://rpc.hoodi.ethpandaops.io/",
+  "currentChainId": 560048,
+  "currentRpcName": "Default RPC (from .env)",
+  "savedRpcs": {
+    "default_env": {
+      "name": "Default RPC (from .env)",
+      "rpc": "https://rpc.hoodi.ethpandaops.io/",
+      "chainId": 560048,
+      "gasConfig": {
+        "mode": "auto",
+        "value": 0
+      }
+    },
+    "mainnet": {
+      "name": "Ethereum Mainnet",
+      "rpc": "https://eth.llamarpc.com",
+      "chainId": 1,
+      "gasConfig": {
+        "mode": "auto",
+        "value": 0
+      }
+    },
+    "bsc": {
+      "name": "BNB Smart Chain",
+      "rpc": "https://bsc-dataseed.binance.org/",
+      "chainId": 56,
+      "gasConfig": {
+        "mode": "auto",
+        "value": 0
+      }
+    },
+    "polygon": {
+      "name": "Polygon Mainnet",
+      "rpc": "https://polygon-rpc.com",
+      "chainId": 137,
+      "gasConfig": {
+        "mode": "auto",
+        "value": 0
+      }
+    }
+  },
+  "autoSaveRpc": true,
+  "updatedAt": "2026-06-01T07:53:56.706Z"
+}
