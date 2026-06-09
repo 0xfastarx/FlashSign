@@ -60,14 +60,19 @@ function buildRpcUrl(config, port = null) {
 }
 
 // ─── FETCH RPC ────────────────────────────────────────────────────────────────
-async function fetchBotRpc(method, params = [], rpcUrl) {
+async function fetchBotRpc(method, params = [], rpcUrl, origin = null) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
+  // Timeout 120 detik — DApp Approval bisa menunggu hingga 60 detik untuk persetujuan user
+  const timeout = setTimeout(() => controller.abort(), 120000);
   try {
+    const bodyObj = { jsonrpc: '2.0', id: Date.now(), method, params };
+    if (origin) {
+      bodyObj.origin = origin;
+    }
     const res = await fetch(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+      body: JSON.stringify(bodyObj),
       signal: controller.signal
     });
     clearTimeout(timeout);
@@ -128,7 +133,7 @@ _browser.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       case 'rpcRequest': {
         const rpcUrl = buildRpcUrl(config);
         try {
-          const result = await fetchBotRpc(msg.method, msg.params || [], rpcUrl);
+          const result = await fetchBotRpc(msg.method, msg.params || [], rpcUrl, msg.origin);
           return { result };
         } catch (err) {
           return { error: { code: -32603, message: err.message } };

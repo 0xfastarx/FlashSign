@@ -63,7 +63,7 @@ class MetaMaskRpcServer {
                 // FIX: Handle GET request — MetaMask kadang kirim GET untuk health check
                 if (req.method === 'GET') {
                     res.writeHead(200);
-                    res.end(JSON.stringify({ status: 'ok', bot: 'FA STARX RPC Inject' }));
+                    res.end(JSON.stringify({ status: 'ok', bot: '0xfastarx RPC Inject' }));
                     return;
                 }
 
@@ -72,6 +72,9 @@ class MetaMaskRpcServer {
                     res.end(JSON.stringify({ error: 'Method Not Allowed' }));
                     return;
                 }
+
+                // [v19.2] Capture origin dari HTTP request headers untuk DApp identification
+                const requestOrigin = req.headers.origin || req.headers.referer || null;
 
                 let body = '';
                 req.on('data', chunk => body += chunk.toString());
@@ -83,12 +86,16 @@ class MetaMaskRpcServer {
                         // MetaMask sering mengirim beberapa request sekaligus dalam array
                         if (Array.isArray(parsed)) {
                             const responses = await Promise.all(
-                                parsed.map(rpcReq => this.handleRpcRequest(rpcReq))
+                                parsed.map(rpcReq => {
+                                    const actualOrigin = rpcReq.origin || requestOrigin;
+                                    return this.handleRpcRequest(rpcReq, actualOrigin);
+                                })
                             );
                             res.writeHead(200);
                             res.end(JSON.stringify(responses));
                         } else {
-                            const response = await this.handleRpcRequest(parsed);
+                            const actualOrigin = parsed.origin || requestOrigin;
+                            const response = await this.handleRpcRequest(parsed, actualOrigin);
                             res.writeHead(200);
                             res.end(JSON.stringify(response));
                         }
@@ -129,7 +136,7 @@ class MetaMaskRpcServer {
         });
     }
 
-    async handleRpcRequest(rpcRequest) {
+    async handleRpcRequest(rpcRequest, requestOrigin = null) {
         const { id, method, params } = rpcRequest;
         this.requestCount++;
 
@@ -168,6 +175,40 @@ class MetaMaskRpcServer {
                 console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi wallet belum aktif`);
                 return { jsonrpc: '2.0', id, result: [] };
             }
+
+            // [v19.2] DApp Connection Approval — hanya untuk eth_requestAccounts (first connect)
+            if (method === 'eth_requestAccounts') {
+                const dappOrigin = requestOrigin || 'Unknown Origin';
+                const dappDetails = {
+                    dappName: this._extractDappName(dappOrigin),
+                    dappUrl: dappOrigin,
+                    chainId: this.cryptoApp.currentChainId,
+                    walletAddress: address,
+                    via: `RPC Inject (Port ${this.port})`
+                };
+
+                const isConnected = this.cryptoApp.isDappConnected(dappOrigin);
+
+                if (this.cryptoApp.dappApprovalRequired && !isConnected) {
+                    console.log(`[RPC Inject] 🔐 DApp Approval ON — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    try {
+                        await this.cryptoApp.requestDappApproval(dappDetails);
+                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                    } catch (approvalError) {
+                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        return {
+                            jsonrpc: '2.0', id,
+                            error: { code: 4001, message: 'User rejected the connection request' }
+                        };
+                    }
+                } else if (!isConnected) {
+                    // Mode OFF dan belum terhubung: simpan dan kirim notifikasi info-only
+                    this.cryptoApp.addConnectedDapp(dappDetails);
+                    this.cryptoApp.sendDappConnectNotification(dappDetails);
+                }
+            }
+
             console.log(`[RPC Inject] 👛 ${method} → ${address}`);
             return { jsonrpc: '2.0', id, result: [address.toLowerCase()] };
         }
@@ -233,6 +274,62 @@ class MetaMaskRpcServer {
                 }
             } catch (e) {}
             return await this.forwardToProvider(id, method, params);
+        }
+
+        // ── dapp_forceDisconnect — dikirim dari extension saat DApp disconnect ──────
+        // Extension mengirim ini ke bot agar bot bisa:
+        //   1. Hapus DApp dari connectedDapps[]
+        //   2. Kirim notifikasi Telegram ke admin
+        if (method === 'dapp_forceDisconnect') {
+            const disconnectInfo = params?.[0] || {};
+            const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
+            const reason = disconnectInfo.reason || 'unknown';
+
+            console.log(`[RPC Inject] 🔌 DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+
+            // Cari DApp di connectedDapps berdasarkan URL/origin
+            if (this.cryptoApp.connectedDapps) {
+                const dapp = this.cryptoApp.connectedDapps.find(
+                    d => d.url === dappOrigin || dappOrigin.includes(d.url) || d.url.includes(dappOrigin)
+                );
+
+                if (dapp) {
+                    // Hapus dari list
+                    this.cryptoApp.removeConnectedDapp(dapp.id);
+                    this.cryptoApp.saveRpcConfig();
+
+                    console.log(`[RPC Inject] ✅ DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+
+                    // Kirim notifikasi Telegram ke admin
+                    if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                        const reasonLabel = {
+                            'wallet_revokePermissions': 'Revoke Permissions (EIP-7715)',
+                            'wallet_disconnect': 'Wallet Disconnect',
+                            'accountsChanged_empty': 'Akun dikosongkan oleh DApp',
+                            'manual_from_popup': 'Disconnect manual dari popup extension',
+                            'unknown': 'Tidak diketahui'
+                        }[reason] || reason;
+
+                        this.cryptoApp.bot.sendMessage(
+                            this.cryptoApp.sessionNotificationChatId,
+                            `🔌 *DAPP DISCONNECT OTOMATIS*\n\n` +
+                            `📛 DApp   : *${dapp.name || 'Unknown'}*\n` +
+                            `🌐 URL    : \`${dappOrigin}\`\n` +
+                            `📋 Alasan : ${reasonLabel}\n` +
+                            `🕒 Waktu  : ${new Date().toLocaleString('id-ID')}\n\n` +
+                            `✅ DApp telah diputus dari bot secara otomatis.`,
+                            { parse_mode: 'Markdown' }
+                        ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                    }
+
+                    return { jsonrpc: '2.0', id, result: { ok: true, dapp: dapp.name } };
+                } else {
+                    console.log(`[RPC Inject] ⚠️ DApp tidak ditemukan di list: ${dappOrigin}`);
+                    return { jsonrpc: '2.0', id, result: { ok: false, reason: 'DApp tidak ada di connected list' } };
+                }
+            }
+
+            return { jsonrpc: '2.0', id, result: { ok: false, reason: 'No connected dapps' } };
         }
 
         // Jika method perlu intercept (transaksi/signing)
@@ -302,16 +399,28 @@ class MetaMaskRpcServer {
                 console.log(`[RPC Inject] Total transaksi: ${txCount}`);
 
                 if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    let txHashText = '';
+                    if (method === 'eth_sendTransaction' && result) {
+                        const explorer = this.cryptoApp.getActiveRpcExplorer();
+                        if (explorer) {
+                            txHashText = `🔍 Tx Hash: [${result}](${explorer}/tx/${result})\n`;
+                        } else {
+                            txHashText = `🔍 Tx Hash: \`${result}\`\n`;
+                        }
+                    }
+
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ [RPC Inject] TRANSAKSI DI-APPROVE!\n` +
+                        `✅ *[RPC Inject] TRANSAKSI DI-APPROVE!*\n` +
                         `📊 Total Transaksi: ${txCount}\n\n` +
-                        `💳 ${this.cryptoApp.wallet.address}\n` +
-                        `Method: ${method}\n` +
-                        `⛓️ Chain: ${this.cryptoApp.currentChainId}\n` +
-                        `🌐 RPC: ${this.cryptoApp.currentRpcName}\n` +
+                        `💳 \`${this.cryptoApp.wallet.address}\`\n` +
+                        `Method: \`${method}\`\n` +
+                        `⛓️ Chain: *${this.cryptoApp.currentChainId}*\n` +
+                        `🌐 RPC: *${this.cryptoApp.currentRpcName}*\n` +
+                        txHashText +
                         `⏱️ Delay Used: ${this.cryptoApp.executionDelay}s\n` +
-                        `🕒 ${new Date().toLocaleString()}`
+                        `🕒 ${new Date().toLocaleString()}`,
+                        { parse_mode: 'Markdown' }
                     ).catch(err => console.warn(`[RPC Inject] Telegram notify error: ${err.message}`));
                 }
             }
@@ -387,6 +496,20 @@ class MetaMaskRpcServer {
             vpsMode: this.vpsMode,
             modeLabel: this.vpsMode ? '🌐 VPS' : '💻 Localhost'
         };
+    }
+
+    /**
+     * Helper: Extract nama DApp dari origin URL.
+     * Contoh: 'https://app.uniswap.org' -> 'app.uniswap.org'
+     */
+    _extractDappName(origin) {
+        if (!origin || origin === 'Unknown Origin') return 'Unknown DApp';
+        try {
+            const url = new URL(origin);
+            return url.hostname || origin;
+        } catch {
+            return origin;
+        }
     }
 }
 

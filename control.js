@@ -610,10 +610,8 @@ function startBotProcess(chatId, botId) {
     console.log(`Working Directory: ${config.cwd}`);
     bot.sendMessage(chatId, `🔄 Menjalankan ${config.name}...`).catch(() => { });
 
-    // [FIX #2] Nama variabel 'botProcess' bukan 'process'
-    // agar tidak menimpa global process milik Node.js
     const botProcess = spawn(config.command, config.args, {
-        stdio: 'inherit',
+        stdio: ['ignore', 'inherit', 'inherit'],
         cwd: config.cwd
     });
 
@@ -1012,9 +1010,25 @@ http.createServer((req, res) => {
     console.log(`🌐 Controller HTTP server berjalan di http://127.0.0.1:${HTTP_PORT}`);
 });
 
+let _conflictRestartTimeout = null;
+
 bot.on('polling_error', (error) => {
     if (error.message && error.message.includes('409 Conflict')) {
-        console.warn('⚠️ Conflict terdeteksi (sisa proses lama), mengabaikan...');
+        console.warn('⚠️ Conflict terdeteksi (sisa proses lama). Restart polling dalam 5 detik...');
+        // Jangan spam restart — hanya jadwalkan sekali
+        if (!_conflictRestartTimeout) {
+            _conflictRestartTimeout = setTimeout(async () => {
+                _conflictRestartTimeout = null;
+                try {
+                    await bot.stopPolling();
+                    await new Promise(r => setTimeout(r, 2000));
+                    await bot.startPolling();
+                    console.log('✅ Polling berhasil di-restart setelah conflict.');
+                } catch (restartErr) {
+                    console.error('❌ Gagal restart polling:', restartErr.message);
+                }
+            }, 5000);
+        }
     } else {
         console.error(`Polling Error: ${error.code} - ${error.message}`);
     }

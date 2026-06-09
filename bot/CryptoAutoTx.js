@@ -60,6 +60,12 @@ class CryptoAutoTx {
         // Auto-Save RPC (Default: True)
         this.autoSaveRpc = true;
 
+        // [v19.2] DApp Connection Approval — Saklar persetujuan koneksi DApp
+        this.dappApprovalRequired = false;  // false = auto-connect, true = manual approval via Telegram
+        this.pendingDappApprovals = new Map(); // Map<approvalId, {resolve, reject, timer, details}>
+        this._dappApprovalCounter = 0;
+        this.connectedDapps = []; // Array of { id, url, name, connectedAt, via }
+
         if (this.rl !== null) {
             this.initTelegramBot();
         }
@@ -93,6 +99,14 @@ class CryptoAutoTx {
                     this.autoSaveRpc = rpcConfig.autoSaveRpc;
                 }
 
+                if (rpcConfig.dappApprovalRequired !== undefined) {
+                    this.dappApprovalRequired = rpcConfig.dappApprovalRequired;
+                }
+
+                if (rpcConfig.connectedDapps !== undefined) {
+                    this.connectedDapps = rpcConfig.connectedDapps;
+                }
+
                 for (const key in this.savedRpcs) {
                     if (!this.savedRpcs[key].gasConfig) {
                         this.savedRpcs[key].gasConfig = { mode: 'auto', value: 0 };
@@ -101,6 +115,8 @@ class CryptoAutoTx {
 
                 console.log(`[Session ${this.sessionId}] Loaded RPC configuration:`, this.currentRpcName);
                 console.log(`[Session ${this.sessionId}] Auto-Save RPC: ${this.autoSaveRpc ? 'ON' : 'OFF'}`);
+                console.log(`[Session ${this.sessionId}] DApp Approval: ${this.dappApprovalRequired ? 'ON (Manual)' : 'OFF (Auto)'}`);
+
             } else {
                 console.log(`[Session ${this.sessionId}] File RPC tidak ditemukan, membuat default...`);
                 this.savedRpcs = this.getDefaultRpcs();
@@ -119,6 +135,7 @@ class CryptoAutoTx {
             name: 'Default RPC (from .env)',
             rpc: this.config.DEFAULT_RPC_URL,
             chainId: this.config.DEFAULT_RPC_CHAIN_ID,
+            explorer: null,
             gasConfig: { mode: 'auto', value: 0 }
         };
 
@@ -128,32 +145,48 @@ class CryptoAutoTx {
                 name: 'Ethereum Mainnet',
                 rpc: 'https://eth.llamarpc.com',
                 chainId: 1,
+                explorer: 'https://etherscan.io',
                 gasConfig: { mode: 'auto', value: 0 }
             },
             'bsc': {
                 name: 'BNB Smart Chain',
                 rpc: 'https://bsc-dataseed.binance.org/',
                 chainId: 56,
+                explorer: 'https://bscscan.com',
                 gasConfig: { mode: 'auto', value: 0 }
             },
             'polygon': {
                 name: 'Polygon Mainnet',
                 rpc: 'https://polygon-rpc.com',
                 chainId: 137,
+                explorer: 'https://polygonscan.com',
                 gasConfig: { mode: 'auto', value: 0 }
             }
         };
     }
 
+    getActiveRpcExplorer() {
+        if (!this.savedRpcs) return null;
+        for (const key in this.savedRpcs) {
+            const rpc = this.savedRpcs[key];
+            if (rpc && rpc.rpc === this.currentRpc) {
+                return rpc.explorer || null;
+            }
+        }
+        return null;
+    }
+
     saveRpcConfig() {
         try {
             const rpcConfig = {
-                currentRpc: this.currentRpc,
-                currentChainId: this.currentChainId,
-                currentRpcName: this.currentRpcName,
-                savedRpcs: this.savedRpcs,
-                autoSaveRpc: this.autoSaveRpc,
-                updatedAt: new Date().toISOString()
+                 currentRpc: this.currentRpc,
+                 currentChainId: this.currentChainId,
+                 currentRpcName: this.currentRpcName,
+                 savedRpcs: this.savedRpcs,
+                 autoSaveRpc: this.autoSaveRpc,
+                 dappApprovalRequired: this.dappApprovalRequired,
+                 connectedDapps: this.connectedDapps,
+                 updatedAt: new Date().toISOString()
             };
             fs.writeFileSync(this.rpcFile, JSON.stringify(rpcConfig, null, 2));
             console.log(`[Session ${this.sessionId}] RPC configuration saved`);
@@ -182,6 +215,102 @@ class CryptoAutoTx {
             this.currentRpcName = 'Default Fallback';
             this.provider = new ethers.JsonRpcProvider(this.currentRpc);
         }
+    }
+
+    async runWithFailover(fn) {
+        let attempts = 0;
+        let maxAttempts = 1;
+        
+        let activeRpcConfig = null;
+        for (const key in this.savedRpcs) {
+            const rpc = this.savedRpcs[key];
+            if (rpc && (rpc.rpc === this.currentRpc || (rpc.backupRpcs && rpc.backupRpcs.includes(this.currentRpc)))) {
+                activeRpcConfig = rpc;
+                break;
+            }
+        }
+        if (activeRpcConfig && activeRpcConfig.backupRpcs) {
+            maxAttempts += activeRpcConfig.backupRpcs.length;
+        }
+
+        while (attempts < maxAttempts) {
+            try {
+                return await fn();
+            } catch (error) {
+                const isNetworkError = error.message.includes('fetch') || 
+                                       error.message.includes('timeout') || 
+                                       error.message.includes('SERVER_ERROR') || 
+                                       error.message.includes('502') || 
+                                       error.message.includes('503') ||
+                                       error.message.includes('504') ||
+                                       error.message.includes('bad response') ||
+                                       error.message.includes('could not detect network') ||
+                                       error.code === 'TIMEOUT' ||
+                                       error.code === 'SERVER_ERROR';
+
+                if (isNetworkError) {
+                    console.log(`[Session ${this.sessionId}] Network error detected on ${this.currentRpc}: ${error.message}`);
+                    attempts++;
+                    if (attempts >= maxAttempts) {
+                        throw error;
+                    }
+                    const switched = await this.switchToNextBackupRpc();
+                    if (!switched) {
+                        throw error;
+                    }
+                } else {
+                    throw error;
+                }
+            }
+        }
+    }
+
+    async switchToNextBackupRpc() {
+        if (!this.savedRpcs) return false;
+        
+        let activeRpcConfig = null;
+        for (const key in this.savedRpcs) {
+            const rpc = this.savedRpcs[key];
+            if (rpc && (rpc.rpc === this.currentRpc || (rpc.backupRpcs && rpc.backupRpcs.includes(this.currentRpc)))) {
+                activeRpcConfig = rpc;
+                break;
+            }
+        }
+
+        if (!activeRpcConfig) {
+            console.log(`[Session ${this.sessionId}] Active RPC configuration not found for failover.`);
+            return false;
+        }
+
+        const backups = activeRpcConfig.backupRpcs || [];
+        if (backups.length === 0) {
+            console.log(`[Session ${this.sessionId}] No backup RPCs configured for ${activeRpcConfig.name}.`);
+            return false;
+        }
+
+        const allUrls = [activeRpcConfig.rpc, ...backups];
+        const currentIndex = allUrls.indexOf(this.currentRpc);
+        const nextIndex = (currentIndex + 1) % allUrls.length;
+        const nextUrl = allUrls[nextIndex];
+
+        console.log(`[Session ${this.sessionId}] Switching from ${this.currentRpc} to backup URL: ${nextUrl}`);
+        
+        this.currentRpc = nextUrl;
+        this.setupProvider();
+
+        if (this.bot && this.sessionNotificationChatId) {
+            this.bot.sendMessage(
+                this.sessionNotificationChatId,
+                `⚠️ *[Session ${this.sessionId}] KONEKSI RPC DOWN!*\n` +
+                `🔌 Otomatis beralih ke RPC alternatif:\n` +
+                `🌐 RPC: *${this.currentRpcName}*\n` +
+                `🔗 URL Baru: \`${this.currentRpc}\`\n` +
+                `⛓️ Chain ID: *${this.currentChainId}*`,
+                { parse_mode: 'Markdown' }
+            ).catch(err => console.warn(`[Telegram] Failover notification error: ${err.message}`));
+        }
+
+        return true;
     }
 
     getActiveRpcGasConfig() {
@@ -400,7 +529,7 @@ class CryptoAutoTx {
     async getTransactionCount(address) {
         try {
             console.log(`[Session ${this.sessionId}] Getting transaction count from blockchain...`);
-            const transactionCount = await this.provider.getTransactionCount(address);
+            const transactionCount = await this.runWithFailover(() => this.provider.getTransactionCount(address));
             console.log(`[Session ${this.sessionId}] Total transaksi di blockchain: ${transactionCount}`);
             return transactionCount;
         } catch (error) {
@@ -1457,10 +1586,273 @@ class CryptoAutoTx {
         }
     }
 
+    // ============================================================
+    // [v19.2] DAPP CONNECTION APPROVAL SYSTEM
+    // ============================================================
+
+    /**
+     * Minta persetujuan koneksi DApp via Telegram.
+     * Return Promise yang resolve(true) jika disetujui, reject jika ditolak/timeout.
+     * @param {object} details - { dappName, dappUrl, dappIcon, chainId, walletAddress, via }
+     */
+    requestDappApproval(details) {
+        return new Promise((resolve, reject) => {
+            // Jika tidak ada chatId untuk notifikasi, auto-approve (fallback safety)
+            if (!this.bot || !this.sessionNotificationChatId) {
+                console.log(`[Session ${this.sessionId}] ⚠️ DApp Approval: No Telegram chatId, auto-approving...`);
+                resolve(true);
+                return;
+            }
+
+            const approvalId = `da_${Date.now()}_${++this._dappApprovalCounter}`;
+
+            // Timeout 60 detik — auto-reject jika tidak dijawab
+            const timer = setTimeout(() => {
+                if (this.pendingDappApprovals.has(approvalId)) {
+                    this.pendingDappApprovals.delete(approvalId);
+                    console.log(`[Session ${this.sessionId}] ⏰ DApp Approval TIMEOUT: ${approvalId}`);
+
+                    // Update pesan Telegram
+                    if (details._messageId) {
+                        this.bot.editMessageText(
+                            `⏰ *DAPP CONNECTION TIMEOUT*\n\n` +
+                            `🌐 DApp: ${details.dappName || 'Unknown'}\n` +
+                            `🔗 URL: ${details.dappUrl || 'Unknown'}\n\n` +
+                            `❌ Koneksi ditolak otomatis karena tidak ada respons dalam 60 detik.`,
+                            {
+                                chat_id: this.sessionNotificationChatId,
+                                message_id: details._messageId,
+                                parse_mode: 'Markdown'
+                            }
+                        ).catch(() => {});
+                    }
+
+                    reject(new Error('DApp connection request timed out (60s)'));
+                }
+            }, 60000);
+
+            // Simpan ke pending queue
+            this.pendingDappApprovals.set(approvalId, {
+                resolve,
+                reject,
+                timer,
+                details,
+                createdAt: Date.now()
+            });
+
+            // Kirim notifikasi ke Telegram dengan tombol
+            const dappIcon = details.dappIcon ? `🖼️ Icon: ${details.dappIcon}\n` : '';
+            const message =
+                `🔔 *DAPP CONNECTION REQUEST*\n\n` +
+                `🌐 *DApp:* ${this._escapeMarkdown(details.dappName || 'Unknown DApp')}\n` +
+                `🔗 *URL:* ${this._escapeMarkdown(details.dappUrl || 'Unknown')}\n` +
+                `⛓️ *Chain ID:* ${details.chainId || this.currentChainId}\n` +
+                `💳 *Wallet:* \`${details.walletAddress || this.wallet?.address || 'N/A'}\`\n` +
+                `📡 *Via:* ${details.via || 'Unknown'}\n` +
+                `🕒 *Waktu:* ${new Date().toLocaleString()}\n\n` +
+                `⏳ _Auto-reject dalam 60 detik jika tidak dijawab_`;
+
+            this.bot.sendMessage(this.sessionNotificationChatId, message, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: '✅ Connect', callback_data: `dapp_connect_approve_${approvalId}` },
+                            { text: '❌ Reject', callback_data: `dapp_connect_reject_${approvalId}` }
+                        ]
+                    ]
+                }
+            }).then(sentMsg => {
+                // Simpan message_id untuk edit nanti
+                const pending = this.pendingDappApprovals.get(approvalId);
+                if (pending) {
+                    pending.details._messageId = sentMsg.message_id;
+                }
+            }).catch(err => {
+                console.warn(`[Session ${this.sessionId}] ⚠️ DApp Approval: Telegram send error:`, err.message);
+                // Fallback: auto-approve jika gagal kirim ke Telegram
+                this.pendingDappApprovals.delete(approvalId);
+                clearTimeout(timer);
+                resolve(true);
+            });
+        });
+    }
+
+    /**
+     * Resolve pending DApp approval.
+     * @param {string} approvalId
+     * @param {boolean} approved - true = connect, false = reject
+     */
+    resolveDappApproval(approvalId, approved) {
+        const pending = this.pendingDappApprovals.get(approvalId);
+        if (!pending) {
+            return { ok: false, msg: 'Approval request sudah expired atau tidak ditemukan.' };
+        }
+
+        clearTimeout(pending.timer);
+        this.pendingDappApprovals.delete(approvalId);
+
+        const details = pending.details;
+
+        if (approved) {
+            console.log(`[Session ${this.sessionId}] ✅ DApp Approval APPROVED: ${details.dappName || 'Unknown'}`);
+
+            // Update pesan Telegram
+            if (details._messageId && this.bot && this.sessionNotificationChatId) {
+                this.bot.editMessageText(
+                    `✅ *DAPP CONNECTED!*\n\n` +
+                    `🌐 *DApp:* ${this._escapeMarkdown(details.dappName || 'Unknown DApp')}\n` +
+                    `🔗 *URL:* ${this._escapeMarkdown(details.dappUrl || 'Unknown')}\n` +
+                    `⛓️ *Chain ID:* ${details.chainId || this.currentChainId}\n` +
+                    `💳 *Wallet:* \`${details.walletAddress || this.wallet?.address || 'N/A'}\`\n` +
+                    `📡 *Via:* ${details.via || 'Unknown'}\n` +
+                    `🕒 *Waktu:* ${new Date().toLocaleString()}\n\n` +
+                    `👤 Disetujui oleh user`,
+                    {
+                        chat_id: this.sessionNotificationChatId,
+                        message_id: details._messageId,
+                        parse_mode: 'Markdown'
+                    }
+                ).catch(() => {});
+            }
+
+            pending.resolve(true);
+            return { ok: true, msg: 'DApp connection approved.' };
+        } else {
+            console.log(`[Session ${this.sessionId}] ❌ DApp Approval REJECTED: ${details.dappName || 'Unknown'}`);
+
+            // Update pesan Telegram
+            if (details._messageId && this.bot && this.sessionNotificationChatId) {
+                this.bot.editMessageText(
+                    `❌ *DAPP CONNECTION REJECTED*\n\n` +
+                    `🌐 *DApp:* ${this._escapeMarkdown(details.dappName || 'Unknown DApp')}\n` +
+                    `🔗 *URL:* ${this._escapeMarkdown(details.dappUrl || 'Unknown')}\n` +
+                    `⛓️ *Chain ID:* ${details.chainId || this.currentChainId}\n` +
+                    `💳 *Wallet:* \`${details.walletAddress || this.wallet?.address || 'N/A'}\`\n` +
+                    `📡 *Via:* ${details.via || 'Unknown'}\n` +
+                    `🕒 *Waktu:* ${new Date().toLocaleString()}\n\n` +
+                    `🚫 Ditolak oleh user`,
+                    {
+                        chat_id: this.sessionNotificationChatId,
+                        message_id: details._messageId,
+                        parse_mode: 'Markdown'
+                    }
+                ).catch(() => {});
+            }
+
+            pending.reject(new Error('DApp connection rejected by user'));
+            return { ok: true, msg: 'DApp connection rejected.' };
+        }
+    }
+
+    /**
+     * Menambahkan DApp ke daftar yang disetujui (connected).
+     */
+    addConnectedDapp(details) {
+        if (!this.connectedDapps) this.connectedDapps = [];
+        // Gunakan URL DApp sebagai pengenal unik agar tidak duplikat
+        const exists = this.connectedDapps.some(d => d.url === details.dappUrl);
+        if (!exists) {
+            // Generate id unik pendek
+            const id = 'dapp_' + Math.random().toString(36).substring(2, 9);
+            this.connectedDapps.push({
+                id,
+                url: details.dappUrl,
+                name: details.dappName || 'Unknown DApp',
+                connectedAt: new Date().toISOString(),
+                via: details.via || 'Unknown'
+            });
+            this.saveRpcConfig();
+        }
+    }
+
+    /**
+     * Menghapus DApp dari daftar koneksi disetujui berdasarkan ID.
+     */
+    removeConnectedDapp(id) {
+        if (!this.connectedDapps) this.connectedDapps = [];
+        this.connectedDapps = this.connectedDapps.filter(d => d.id !== id);
+        this.saveRpcConfig();
+    }
+
+    /**
+     * Memeriksa apakah DApp dengan URL tertentu sudah disetujui (connected).
+     */
+    isDappConnected(url) {
+        if (!url || url === 'Unknown Origin') return false;
+        if (!this.connectedDapps) this.connectedDapps = [];
+        return this.connectedDapps.some(d => d.url === url);
+    }
+
+    /**
+     * Kirim notifikasi info-only ke Telegram (mode OFF).
+     */
+    sendDappConnectNotification(details) {
+        if (!this.bot || !this.sessionNotificationChatId) return;
+
+        const message =
+            `ℹ️ *DAPP AUTO-CONNECTED*\n\n` +
+            `🌐 *DApp:* ${this._escapeMarkdown(details.dappName || 'Unknown DApp')}\n` +
+            `🔗 *URL:* ${this._escapeMarkdown(details.dappUrl || 'Unknown')}\n` +
+            `⛓️ *Chain ID:* ${details.chainId || this.currentChainId}\n` +
+            `💳 *Wallet:* \`${details.walletAddress || this.wallet?.address || 'N/A'}\`\n` +
+            `📡 *Via:* ${details.via || 'Unknown'}\n` +
+            `🕒 *Waktu:* ${new Date().toLocaleString()}\n\n` +
+            `_DApp Approval Mode: OFF (Auto-Connect)_`;
+
+        this.bot.sendMessage(this.sessionNotificationChatId, message, {
+            parse_mode: 'Markdown'
+        }).catch(err => console.warn(`[Telegram] DApp notify error: ${err.message}`));
+    }
+
+    /**
+     * Helper: Escape karakter Markdown khusus agar tidak break formatting.
+     */
+    _escapeMarkdown(text) {
+        if (!text) return '';
+        return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+    }
+
     async handleSessionProposal(proposal) {
         try {
             const { id, params } = proposal;
             console.log(`[Session ${this.sessionId}] Processing session proposal...`);
+
+            // Extract DApp metadata dari proposal
+            const proposerMeta = params?.proposer?.metadata || {};
+            const dappDetails = {
+                dappName: proposerMeta.name || 'Unknown DApp',
+                dappUrl: proposerMeta.url || 'Unknown',
+                dappIcon: (proposerMeta.icons && proposerMeta.icons[0]) || null,
+                chainId: this.currentChainId,
+                walletAddress: this.wallet?.address || 'N/A',
+                via: 'WalletConnect'
+            };
+
+            // [v19.2] DApp Approval Check
+            const isConnected = this.isDappConnected(dappDetails.dappUrl);
+
+            if (this.dappApprovalRequired && !isConnected) {
+                console.log(`[Session ${this.sessionId}] 🔐 DApp Approval ON — menunggu persetujuan user...`);
+                try {
+                    await this.requestDappApproval(dappDetails);
+                    console.log(`[Session ${this.sessionId}] ✅ DApp disetujui oleh user.`);
+                    this.addConnectedDapp(dappDetails);
+                } catch (approvalError) {
+                    console.log(`[Session ${this.sessionId}] ❌ DApp ditolak: ${approvalError.message}`);
+                    // Reject session proposal
+                    try {
+                        await this.signClient.reject({ id, reason: { code: 4001, message: 'User rejected the connection' } });
+                    } catch (rejectErr) {
+                        console.warn(`[Session ${this.sessionId}] Error rejecting proposal: ${rejectErr.message}`);
+                    }
+                    return;
+                }
+            } else if (!isConnected) {
+                // Mode OFF dan belum ada di list: simpan dan kirim notifikasi info-only
+                this.addConnectedDapp(dappDetails);
+                this.sendDappConnectNotification(dappDetails);
+            }
 
             await this.delayExecution('Approving Session Connection');
 
@@ -1620,15 +2012,27 @@ class CryptoAutoTx {
                 console.log(`[Session ${this.sessionId}] Total transaksi: ${txCount}`);
 
                 if (this.bot && this.sessionNotificationChatId) {
+                    let txHashText = '';
+                    if (method === 'eth_sendTransaction' && result) {
+                        const explorer = this.getActiveRpcExplorer();
+                        if (explorer) {
+                            txHashText = `🔍 Tx Hash: [${result}](${explorer}/tx/${result})\n`;
+                        } else {
+                            txHashText = `🔍 Tx Hash: \`${result}\`\n`;
+                        }
+                    }
+
                     this.bot.sendMessage(this.sessionNotificationChatId,
-                        `✅ [${this.sessionId}] TRANSAKSI DI-APPROVE!\n` +
+                        `✅ *[${this.sessionId}] TRANSAKSI DI-APPROVE!*\n` +
                         `📊 Total Transaksi: ${txCount}\n\n` +
-                        `💳 ${this.wallet.address}\n` +
-                        `Method: ${method}\n` +
-                        `⛓️ Chain: ${this.currentChainId}\n` +
-                        `🌐 RPC: ${this.currentRpcName}\n` +
+                        `💳 \`${this.wallet.address}\`\n` +
+                        `Method: \`${method}\`\n` +
+                        `⛓️ Chain: *${this.currentChainId}*\n` +
+                        `🌐 RPC: *${this.currentRpcName}*\n` +
+                        txHashText +
                         `⏱️ Delay Used: ${this.executionDelay}s\n` +
-                        `🕒 ${new Date().toLocaleString()}`
+                        `🕒 ${new Date().toLocaleString()}`,
+                        { parse_mode: 'Markdown' }
                     ).catch(err => console.warn(`[Telegram] Notify error: ${err.message}`));
                 }
             } else {
@@ -1680,126 +2084,128 @@ class CryptoAutoTx {
     }
 
     async _doSendTransaction(txParams) {
-        console.log(`[Session ${this.sessionId}] Handling send transaction...`);
-        const safeTxParams = { ...txParams };
+        return this.runWithFailover(async () => {
+            console.log(`[Session ${this.sessionId}] Handling send transaction...`);
+            const safeTxParams = { ...txParams };
 
-        if (!safeTxParams.chainId) {
-            safeTxParams.chainId = this.currentChainId;
-        }
-
-        if (safeTxParams.gasLimit && typeof safeTxParams.gasLimit === 'bigint') {
-            safeTxParams.gasLimit = safeTxParams.gasLimit.toString();
-        }
-
-        if (safeTxParams.value && typeof safeTxParams.value === 'bigint') {
-            safeTxParams.value = safeTxParams.value.toString();
-        }
-
-        // Gas Configuration Logic
-        const gasConfig = this.getActiveRpcGasConfig();
-        console.log(`[Session ${this.sessionId}] Gas Strategy: ${gasConfig.mode.toUpperCase()}`);
-
-        if (gasConfig.mode === 'manual' && gasConfig.value > 0) {
-            const gweiValue = ethers.parseUnits(gasConfig.value.toString(), 'gwei');
-            console.log(`[Session ${this.sessionId}] 🛠 FORCE GAS: ${gasConfig.value} Gwei`);
-
-            // FIX: Don't mix legacy gasPrice with EIP-1559 params (maxFeePerGas/maxPriorityFeePerGas)
-            // Remove any existing EIP-1559 params and use legacy gasPrice only
-            delete safeTxParams.maxFeePerGas;
-            delete safeTxParams.maxPriorityFeePerGas;
-            safeTxParams.gasPrice = gweiValue;
-
-        } else if (gasConfig.mode === 'aggressive' && gasConfig.value > 0) {
-            try {
-                const feeData = await this.provider.getFeeData();
-                const boostFactor = 100n + BigInt(Math.floor(gasConfig.value));
-
-                if (feeData.maxFeePerGas) {
-                    safeTxParams.maxFeePerGas = (feeData.maxFeePerGas * boostFactor) / 100n;
-                    // FIX: Guard against null maxPriorityFeePerGas before multiplying
-                    safeTxParams.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
-                        ? (feeData.maxPriorityFeePerGas * boostFactor) / 100n
-                        : safeTxParams.maxFeePerGas;
-                    // FIX: Ensure maxPriorityFeePerGas doesn't exceed maxFeePerGas
-                    if (safeTxParams.maxPriorityFeePerGas > safeTxParams.maxFeePerGas) {
-                        safeTxParams.maxPriorityFeePerGas = safeTxParams.maxFeePerGas;
-                    }
-                    // FIX: Remove legacy gasPrice if using EIP-1559 params
-                    delete safeTxParams.gasPrice;
-                    console.log(`[Session ${this.sessionId}] 🚀 AGGRESSIVE GAS (+${gasConfig.value}%)`);
-                } else if (feeData.gasPrice) {
-                    safeTxParams.gasPrice = (feeData.gasPrice * boostFactor) / 100n;
-                    // FIX: Remove EIP-1559 params if using legacy gasPrice
-                    delete safeTxParams.maxFeePerGas;
-                    delete safeTxParams.maxPriorityFeePerGas;
-                    console.log(`[Session ${this.sessionId}] 🚀 AGGRESSIVE GAS PRICE (+${gasConfig.value}%)`);
-                }
-            } catch (e) {
-                console.log(`[Session ${this.sessionId}] ⚠️ Gagal fetch fee data, fallback ke Auto.`);
+            if (!safeTxParams.chainId) {
+                safeTxParams.chainId = this.currentChainId;
             }
-        }
 
-        // Auto Mode Fallback
-        if (!safeTxParams.gasPrice && !safeTxParams.maxFeePerGas) {
-            try {
-                const feeData = await this.provider.getFeeData();
-                if (feeData.maxFeePerGas) {
-                    safeTxParams.maxFeePerGas = feeData.maxFeePerGas?.toString();
-                    // FIX: Guard against null maxPriorityFeePerGas
-                    safeTxParams.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas?.toString()
-                        ?? safeTxParams.maxFeePerGas;
-                    // FIX: Don't mix EIP-1559 with legacy
-                    delete safeTxParams.gasPrice;
-                    console.log(`[Session ${this.sessionId}] Using Auto maxFeePerGas`);
-                } else if (feeData.gasPrice) {
-                    safeTxParams.gasPrice = feeData.gasPrice?.toString();
-                    delete safeTxParams.maxFeePerGas;
-                    delete safeTxParams.maxPriorityFeePerGas;
-                    console.log(`[Session ${this.sessionId}] Using Auto gasPrice (legacy)`);
-                }
-            } catch (error) {
-                console.log(`[Session ${this.sessionId}] Failed to get fee data, using defaults`);
-                safeTxParams.gasPrice = '1000000000';
+            if (safeTxParams.gasLimit && typeof safeTxParams.gasLimit === 'bigint') {
+                safeTxParams.gasLimit = safeTxParams.gasLimit.toString();
+            }
+
+            if (safeTxParams.value && typeof safeTxParams.value === 'bigint') {
+                safeTxParams.value = safeTxParams.value.toString();
+            }
+
+            // Gas Configuration Logic
+            const gasConfig = this.getActiveRpcGasConfig();
+            console.log(`[Session ${this.sessionId}] Gas Strategy: ${gasConfig.mode.toUpperCase()}`);
+
+            if (gasConfig.mode === 'manual' && gasConfig.value > 0) {
+                const gweiValue = ethers.parseUnits(gasConfig.value.toString(), 'gwei');
+                console.log(`[Session ${this.sessionId}] 🛠 FORCE GAS: ${gasConfig.value} Gwei`);
+
+                // FIX: Don't mix legacy gasPrice with EIP-1559 params (maxFeePerGas/maxPriorityFeePerGas)
+                // Remove any existing EIP-1559 params and use legacy gasPrice only
                 delete safeTxParams.maxFeePerGas;
                 delete safeTxParams.maxPriorityFeePerGas;
-            }
-        }
+                safeTxParams.gasPrice = gweiValue;
 
-        console.log(`[Session ${this.sessionId}] Estimating gas limit...`);
-        try {
-            const estimateParams = { ...safeTxParams };
-            if (estimateParams.gasLimit) delete estimateParams.gasLimit;
-            const estimatedGas = await this.provider.estimateGas(estimateParams);
-            if (estimatedGas) {
-                // FIX: Ensure estimatedGas is BigInt before arithmetic, then convert to string
-                const estimatedBig = BigInt(estimatedGas.toString());
-                safeTxParams.gasLimit = (estimatedBig * 120n / 100n).toString();
-                console.log(`[Session ${this.sessionId}] Estimated gas: ${estimatedBig}, using: ${safeTxParams.gasLimit}`);
-            } else {
-                throw new Error('Gas estimation returned undefined');
-            }
-        } catch (error) {
-            console.log(`[Session ${this.sessionId}] Gas estimation failed:`, error.message);
-            safeTxParams.gasLimit = (safeTxParams.data && safeTxParams.data !== '0x') ? '100000' : '25000';
-            console.log(`[Session ${this.sessionId}] Using default gas: ${safeTxParams.gasLimit}`);
-        }
+            } else if (gasConfig.mode === 'aggressive' && gasConfig.value > 0) {
+                try {
+                    const feeData = await this.provider.getFeeData();
+                    const boostFactor = 100n + BigInt(Math.floor(gasConfig.value));
 
-        console.log(`[Session ${this.sessionId}] Sending transaction...`);
-        try {
-            const tx = await this.wallet.sendTransaction(safeTxParams);
-            console.log(`[Session ${this.sessionId}] Transaction sent:`, tx.hash);
-            this.waitForConfirmation(tx.hash);
-            return tx.hash;
-        } catch (error) {
-            console.log(`[Session ${this.sessionId}] Error sending transaction:`, error.message);
-            if (error.message.includes('insufficient funds') || error.code === 'INSUFFICIENT_FUNDS') {
-                throw new Error('Saldo tidak cukup untuk melakukan transaksi');
+                    if (feeData.maxFeePerGas) {
+                        safeTxParams.maxFeePerGas = (feeData.maxFeePerGas * boostFactor) / 100n;
+                        // FIX: Guard against null maxPriorityFeePerGas before multiplying
+                        safeTxParams.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas
+                            ? (feeData.maxPriorityFeePerGas * boostFactor) / 100n
+                            : safeTxParams.maxFeePerGas;
+                        // FIX: Ensure maxPriorityFeePerGas doesn't exceed maxFeePerGas
+                        if (safeTxParams.maxPriorityFeePerGas > safeTxParams.maxFeePerGas) {
+                            safeTxParams.maxPriorityFeePerGas = safeTxParams.maxFeePerGas;
+                        }
+                        // FIX: Remove legacy gasPrice if using EIP-1559 params
+                        delete safeTxParams.gasPrice;
+                        console.log(`[Session ${this.sessionId}] 🚀 AGGRESSIVE GAS (+${gasConfig.value}%)`);
+                    } else if (feeData.gasPrice) {
+                        safeTxParams.gasPrice = (feeData.gasPrice * boostFactor) / 100n;
+                        // FIX: Remove EIP-1559 params if using legacy gasPrice
+                        delete safeTxParams.maxFeePerGas;
+                        delete safeTxParams.maxPriorityFeePerGas;
+                        console.log(`[Session ${this.sessionId}] 🚀 AGGRESSIVE GAS PRICE (+${gasConfig.value}%)`);
+                    }
+                } catch (e) {
+                    console.log(`[Session ${this.sessionId}] ⚠️ Gagal fetch fee data, fallback ke Auto.`);
+                }
             }
-            if (error.message.includes('nonce') || error.code === 'NONCE_EXPIRED') {
-                throw new Error('Nonce invalid, coba restart bot');
+
+            // Auto Mode Fallback
+            if (!safeTxParams.gasPrice && !safeTxParams.maxFeePerGas) {
+                try {
+                    const feeData = await this.provider.getFeeData();
+                    if (feeData.maxFeePerGas) {
+                        safeTxParams.maxFeePerGas = feeData.maxFeePerGas?.toString();
+                        // FIX: Guard against null maxPriorityFeePerGas
+                        safeTxParams.maxPriorityFeePerGas = feeData.maxPriorityFeePerGas?.toString()
+                            ?? safeTxParams.maxFeePerGas;
+                        // FIX: Don't mix EIP-1559 with legacy
+                        delete safeTxParams.gasPrice;
+                        console.log(`[Session ${this.sessionId}] Using Auto maxFeePerGas`);
+                    } else if (feeData.gasPrice) {
+                        safeTxParams.gasPrice = feeData.gasPrice?.toString();
+                        delete safeTxParams.maxFeePerGas;
+                        delete safeTxParams.maxPriorityFeePerGas;
+                        console.log(`[Session ${this.sessionId}] Using Auto gasPrice (legacy)`);
+                    }
+                } catch (error) {
+                    console.log(`[Session ${this.sessionId}] Failed to get fee data, using defaults`);
+                    safeTxParams.gasPrice = '1000000000';
+                    delete safeTxParams.maxFeePerGas;
+                    delete safeTxParams.maxPriorityFeePerGas;
+                }
             }
-            throw error;
-        }
+
+            console.log(`[Session ${this.sessionId}] Estimating gas limit...`);
+            try {
+                const estimateParams = { ...safeTxParams };
+                if (estimateParams.gasLimit) delete estimateParams.gasLimit;
+                const estimatedGas = await this.provider.estimateGas(estimateParams);
+                if (estimatedGas) {
+                    // FIX: Ensure estimatedGas is BigInt before arithmetic, then convert to string
+                    const estimatedBig = BigInt(estimatedGas.toString());
+                    safeTxParams.gasLimit = (estimatedBig * 120n / 100n).toString();
+                    console.log(`[Session ${this.sessionId}] Estimated gas: ${estimatedBig}, using: ${safeTxParams.gasLimit}`);
+                } else {
+                    throw new Error('Gas estimation returned undefined');
+                }
+            } catch (error) {
+                console.log(`[Session ${this.sessionId}] Gas estimation failed:`, error.message);
+                safeTxParams.gasLimit = (safeTxParams.data && safeTxParams.data !== '0x') ? '100000' : '25000';
+                console.log(`[Session ${this.sessionId}] Using default gas: ${safeTxParams.gasLimit}`);
+            }
+
+            console.log(`[Session ${this.sessionId}] Sending transaction...`);
+            try {
+                const tx = await this.wallet.sendTransaction(safeTxParams);
+                console.log(`[Session ${this.sessionId}] Transaction sent:`, tx.hash);
+                this.waitForConfirmation(tx.hash);
+                return tx.hash;
+            } catch (error) {
+                console.log(`[Session ${this.sessionId}] Error sending transaction:`, error.message);
+                if (error.message.includes('insufficient funds') || error.code === 'INSUFFICIENT_FUNDS') {
+                    throw new Error('Saldo tidak cukup untuk melakukan transaksi');
+                }
+                if (error.message.includes('nonce') || error.code === 'NONCE_EXPIRED') {
+                    throw new Error('Nonce invalid, coba restart bot');
+                }
+                throw error;
+            }
+        });
     }
 
     async waitForConfirmation(txHash) {
@@ -2023,7 +2429,7 @@ class CryptoAutoTx {
 
         try {
             console.log(`[Session ${this.sessionId}] Checking balance...`);
-            const balance = await this.provider.getBalance(this.wallet.address);
+            const balance = await this.runWithFailover(() => this.provider.getBalance(this.wallet.address));
             const balanceEth = ethers.formatEther(balance);
             const txCount = await this.getTransactionCount(this.wallet.address);
 
