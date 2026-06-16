@@ -217,6 +217,22 @@ function askQuestion(rl, prompt, defaultVal = '') {
     });
 }
 
+async function askWithSameCheck(rl, prompt, oldVal, label) {
+    const input = await askQuestion(rl, prompt, oldVal);
+    if (input && input === oldVal) {
+        warn(`Nilai ${label} sama dengan yang sudah ada di .env.`);
+        const confirm = await askQuestion(rl, 'Tetap simpan ulang? (y/N)', 'n');
+        if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
+            info(`${label} dipertahankan (tidak diubah).`);
+        } else {
+            ok(`${label} disimpan ulang.`);
+        }
+    } else if (input !== oldVal) {
+        ok(`${label} diperbarui.`);
+    }
+    return input;
+}
+
 function askPassword(prompt) {
     return new Promise(resolve => {
         process.stdout.write(PURPLE + `  » ${prompt}: ` + RESET);
@@ -379,13 +395,13 @@ async function main() {
             process.exit(1);
         }
         ok('OTP terverifikasi! Melanjutkan ke menu update...\n');
-        await runSetupFlow(envPath, envContent, approvedHash, 'update');
+        await runSetupFlow(envPath, envContent, approvedHash, 'update', secret);
     }
 }
 
 // ─── Alur Setup Utama ─────────────────────────────────────────────────────────
 
-async function runSetupFlow(envPath, envContent, approvedHash, mode) {
+async function runSetupFlow(envPath, envContent, approvedHash, mode, existing2FASecret = null) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
     // Baca nilai lama dari .env sebagai default
@@ -400,32 +416,74 @@ async function runSetupFlow(envPath, envContent, approvedHash, mode) {
     const oldGithubMain   = getOldVal('GITHUB_MAIN_URL_ENCRYPTED');
     const oldGithubBackup = getOldVal('GITHUB_BACKUP_URL_ENCRYPTED');
     const oldOwnerTgId    = getOldVal('OWNER_TELEGRAM_ID_ENCRYPTED');
-
-    const telegramToken   = getOldVal('TELEGRAM_BOT_TOKEN_ENCRYPTED') || HARDCODED.telegramToken;
-    const controllerToken = getOldVal('CONTROLLER_BOT_TOKEN_ENCRYPTED') || HARDCODED.controllerToken;
-    const adminChatId     = getOldVal('ADMIN_CHAT_ID_ENCRYPTED') || HARDCODED.adminChatId;
-    const walletConnectId = getOldVal('WALLETCONNECT_PROJECT_ID_ENCRYPTED') || HARDCODED.walletConnectId;
+    const oldTelegramToken   = getOldVal('TELEGRAM_BOT_TOKEN_ENCRYPTED') || HARDCODED.telegramToken;
+    const oldControllerToken = getOldVal('CONTROLLER_BOT_TOKEN_ENCRYPTED') || HARDCODED.controllerToken;
+    const oldAdminChatId     = getOldVal('ADMIN_CHAT_ID_ENCRYPTED') || HARDCODED.adminChatId;
+    const walletConnectId    = getOldVal('WALLETCONNECT_PROJECT_ID_ENCRYPTED') || HARDCODED.walletConnectId;
 
     console.log(PURPLE + '┌──────────────────────────────────────────────────────┐');
     console.log('│  INPUT KONFIGURASI (Enter = pertahankan nilai lama)  │');
     console.log('└──────────────────────────────────────────────────────┘' + RESET);
-    info('Tekan Enter pada setiap field untuk mempertahankan nilai saat ini.\n');
+    info('Tekan Enter pada setiap field untuk mempertahankan nilai saat ini.');
+    info('Nilai dalam [...] adalah nilai lama yang tersimpan di .env.\n');
 
     // 1. GitHub Main URL
-    const githubMainUrl = await askQuestion(rl, '1/5 GitHub Main URL (raw.githubusercontent.com)', oldGithubMain);
+    const githubMainUrl = await askWithSameCheck(rl, '1/6 GitHub Main URL (raw.githubusercontent.com)', oldGithubMain, 'GitHub Main URL');
     if (!githubMainUrl) { rl.close(); err('GitHub Main URL wajib diisi!'); process.exit(1); }
-    ok(`GitHub Main URL: ${githubMainUrl.substring(0, 60)}...`);
 
     // 2. GitHub Backup URL
-    const githubBackupUrl = await askQuestion(rl, '2/5 GitHub Backup URL (raw.githubusercontent.com)', oldGithubBackup);
+    const githubBackupUrl = await askWithSameCheck(rl, '2/6 GitHub Backup URL (raw.githubusercontent.com)', oldGithubBackup, 'GitHub Backup URL');
     if (!githubBackupUrl) { rl.close(); err('GitHub Backup URL wajib diisi!'); process.exit(1); }
-    ok(`GitHub Backup URL: ${githubBackupUrl.substring(0, 60)}...`);
 
     // 3. Owner Telegram ID
     let ownerTelegramId = '';
     while (true) {
-        const input = await askQuestion(rl, '3/5 Owner Telegram ID', oldOwnerTgId || HARDCODED.adminChatId);
-        if (/^\d+$/.test(input)) { ownerTelegramId = input; ok(`Owner ID: ${ownerTelegramId}`); break; }
+        const input = await askQuestion(rl, '3/6 Owner Telegram ID', oldOwnerTgId || HARDCODED.adminChatId);
+        if (/^\d+$/.test(input)) {
+            if (input === (oldOwnerTgId || HARDCODED.adminChatId)) {
+                warn('Owner Telegram ID sama dengan yang sudah ada di .env.');
+                const confirm = await askQuestion(rl, 'Tetap simpan ulang? (y/N)', 'n');
+                if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
+                    info('Owner Telegram ID dipertahankan.');
+                } else {
+                    ok('Owner Telegram ID disimpan ulang.');
+                }
+            } else {
+                ok(`Owner Telegram ID: ${input}`);
+            }
+            ownerTelegramId = input;
+            break;
+        }
+        err('Harus berupa angka.');
+    }
+
+    // 4. Token Bot Utama
+    const telegramToken = await askWithSameCheck(rl, '4/6 Token Bot Utama (TELEGRAM_BOT_TOKEN)', oldTelegramToken, 'Token Bot Utama');
+    if (!telegramToken) { rl.close(); err('Token Bot Utama wajib diisi!'); process.exit(1); }
+
+    // 5. Token Controller Bot
+    const controllerToken = await askWithSameCheck(rl, '5/6 Token Controller Bot (CONTROLLER_BOT_TOKEN)', oldControllerToken, 'Token Controller Bot');
+    if (!controllerToken) { rl.close(); err('Token Controller Bot wajib diisi!'); process.exit(1); }
+
+    // 6. Admin Chat ID
+    let adminChatId = '';
+    while (true) {
+        const input = await askQuestion(rl, '6/6 Admin Chat ID (Telegram Chat ID admin)', oldAdminChatId);
+        if (/^\d+$/.test(input)) {
+            if (input === oldAdminChatId) {
+                warn('Admin Chat ID sama dengan yang sudah ada di .env.');
+                const confirm = await askQuestion(rl, 'Tetap simpan ulang? (y/N)', 'n');
+                if (confirm.toLowerCase() !== 'y' && confirm.toLowerCase() !== 'yes') {
+                    info('Admin Chat ID dipertahankan.');
+                } else {
+                    ok('Admin Chat ID disimpan ulang.');
+                }
+            } else {
+                ok(`Admin Chat ID: ${input}`);
+            }
+            adminChatId = input;
+            break;
+        }
         err('Harus berupa angka.');
     }
 
@@ -433,12 +491,12 @@ async function runSetupFlow(envPath, envContent, approvedHash, mode) {
     console.log('');
     info('Karakter tersembunyi saat mengetik password.\n');
 
-    // 4. Password Admin
-    const adminPassword = await askPasswordConfirm('4/5 Password Admin');
+    // Password Admin
+    const adminPassword = await askPasswordConfirm('Password Admin');
     ok('Password Admin tersimpan.\n');
 
-    // 5. Password Script
-    const scriptPassword = await askPasswordConfirm('5/5 Password Script');
+    // Password Script
+    const scriptPassword = await askPasswordConfirm('Password Script');
     ok('Password Script tersimpan.\n');
 
     // ── Setup-2FA ─────────────────────────────────────────────────────────────
@@ -446,30 +504,55 @@ async function runSetupFlow(envPath, envContent, approvedHash, mode) {
     console.log('│  SETUP 2FA UNTUK PROTEKSI SETUP & INTEGRITAS         │');
     console.log('└──────────────────────────────────────────────────────┘' + RESET);
 
-    const newSecret = generateSecret();
-    displaySecretInstructions(newSecret, 'Fastarx Bot - Setup');
+    let newSecret = existing2FASecret;
+    let shouldSetup2FA = false;
 
-    // Konfirmasi OTP
-    let otpConfirmed = false;
-    while (!otpConfirmed) {
+    if (existing2FASecret) {
         const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-        const confirmOtp = await new Promise(resolve => {
-            rl2.question(PURPLE + '  » Masukkan kode 6 digit dari Authenticator untuk konfirmasi: ' + RESET, ans => {
+        const answer = await new Promise(resolve => {
+            rl2.question(PURPLE + '❓ Apakah Anda ingin mengatur ulang (reset) Google Authenticator 2FA? (y/N): ' + RESET, ans => {
                 rl2.close();
-                resolve(ans.trim());
+                resolve(ans.trim().toLowerCase());
             });
         });
-        if (verifyTOTP(newSecret, confirmOtp)) {
-            ok('Kode OTP terverifikasi! 2FA berhasil dikonfigurasi.\n');
-            otpConfirmed = true;
-        } else {
-            err('Kode OTP salah. Pastikan Anda sudah menambahkan secret ke Authenticator dan coba lagi.');
+        if (answer === 'y' || answer === 'yes') {
+            shouldSetup2FA = true;
         }
+    } else {
+        shouldSetup2FA = true;
     }
 
-    // Auto-generate encryptionSalt dan systemId (unik per instalasi)
+    if (shouldSetup2FA) {
+        newSecret = generateSecret();
+        displaySecretInstructions(newSecret, 'Fastarx Bot - Setup');
+
+        // Konfirmasi OTP
+        let otpConfirmed = false;
+        while (!otpConfirmed) {
+            const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
+            const confirmOtp = await new Promise(resolve => {
+                rl2.question(PURPLE + '  » Masukkan kode 6 digit dari Authenticator untuk konfirmasi: ' + RESET, ans => {
+                    rl2.close();
+                    resolve(ans.trim());
+                });
+            });
+            if (verifyTOTP(newSecret, confirmOtp)) {
+                ok('Kode OTP terverifikasi! 2FA berhasil dikonfigurasi.\n');
+                otpConfirmed = true;
+            } else {
+                err('Kode OTP salah. Pastikan Anda sudah menambahkan secret ke Authenticator dan coba lagi.');
+            }
+        }
+    } else {
+        ok('Mempertahankan Setup-2FA yang sudah ada.\n');
+    }
+
+    // Ambil SYSTEM_ID lama jika ada, atau buat baru jika tidak ada
+    const oldSysId = readEnvField(envContent, 'SYSTEM_ID');
+    const sysId = oldSysId || ('sys_id_' + crypto.randomBytes(16).toString('hex'));
+
+    // Enkripsi Salt baru (boleh baru karena disimpan di .env)
     const encSalt = crypto.randomBytes(32).toString('hex');
-    const sysId   = 'sys_id_' + crypto.randomBytes(16).toString('hex');
 
     // Simpan .env
     info('Mengenkripsi semua data dan menyimpan .env...');

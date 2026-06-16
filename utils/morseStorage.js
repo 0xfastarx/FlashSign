@@ -4,7 +4,21 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const FILE_PATH = path.join(__dirname, '../.morse-messages-secure.json');
+const DATA_DIR = path.join(__dirname, '../data');
+const FILE_PATH = path.join(DATA_DIR, '.morse-messages-secure.json');
+const OLD_FILE_PATH = path.join(__dirname, '../.morse-messages-secure.json');
+
+// Auto-migrasi: pindahkan file lama ke folder data/ jika ada
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (fs.existsSync(OLD_FILE_PATH) && !fs.existsSync(FILE_PATH)) {
+    try {
+        fs.renameSync(OLD_FILE_PATH, FILE_PATH);
+        console.log('✅ [Morse] Migrasi data dari root → data/ berhasil.');
+    } catch (e) {
+        console.error('⚠️ [Morse] Gagal migrasi:', e.message);
+    }
+}
+
 const SYSTEM_PASSPHRASE = "fery-morse-secure-passphrase-2026-system-storage";
 const SYSTEM_SALT = "fery-storage-salt-9876";
 const SYSTEM_KEY = crypto.scryptSync(SYSTEM_PASSPHRASE, SYSTEM_SALT, 32);

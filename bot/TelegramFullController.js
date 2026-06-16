@@ -18,6 +18,7 @@ const morse = require('../utils/morse');
 const morseMap = morse.parseMorseFile();         // legacy: untuk dekripsi pesan lama
 const allMorseCiphers = morse.getAllCiphers();    // baru: 273 versi cipher per-char random
 const morseStorage = require('../utils/morseStorage');
+const backupHelper = require('../utils/backupHelper');
 const ui = new ModernUI();
 
 
@@ -86,7 +87,16 @@ class TelegramFullController {
     // ─── OWNER CHECK ──────────────────────────────────────────────────────────
     isOwner(chatId) {
         if (!this.config.OWNER_TELEGRAM_ID) return false;
-        return String(chatId) === String(this.config.OWNER_TELEGRAM_ID);
+        const isTgOwner = String(chatId) === String(this.config.OWNER_TELEGRAM_ID);
+        if (!isTgOwner) return false;
+
+        // Jika user ini adalah owner Telegram ID-nya tapi login aktif menggunakan sandi/level script,
+        // perlakukan dia sebagai NON-owner (script mode).
+        const loginMeta = this.userLoginMeta.get(chatId);
+        if (loginMeta && loginMeta.level === 'script') {
+            return false;
+        }
+        return true;
     }
 
     // Ambil username owner dari Telegram untuk ditampilkan sebagai kontak
@@ -678,7 +688,6 @@ class TelegramFullController {
         const keyboard = [
             [{ text: '💸 Transfer Bot', callback_data: 'transfer_menu' }],
             [{ text: '🔐 Morse Cipher Tool', callback_data: 'morse_menu' }],
-            [{ text: '🌐 Kelola DApps', callback_data: 'dapps_menu' }],
             [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
         ];
 
@@ -1065,7 +1074,7 @@ class TelegramFullController {
             }
         };
 
-        const ownerTag = this.isOwner(chatId) ? '\n👑 Anda login sebagai Owner.' : '';
+        const ownerTag = this.isOwner(chatId) ? '\n👑 Anda login sebagai Owner.' : '\n📜 Anda login sebagai Script.';
         this.bot.sendMessage(chatId,
             `🤖 FA STARX BOT v19.0 - MAIN MENU\n(Session: ${chatId})${ownerTag}\n\nPilih menu di bawah:`,
             menu
@@ -1080,6 +1089,7 @@ class TelegramFullController {
             [{ text: '📊 Info & Status', callback_data: 'info_menu' }],
             [{ text: '🔐 Kelola 2FA', callback_data: '2fa_menu' }],
             [{ text: '🔑 Ubah Sandi', callback_data: 'owner_change_password_menu' }],
+            [{ text: '📦 Migrasi/Backup Data', callback_data: 'migration_menu' }],
             [{ text: '🚪 Logout', callback_data: 'logout_confirm' }],
             [{ text: '🔙 Main Menu', callback_data: 'main_menu' }],
         ];
@@ -1088,6 +1098,25 @@ class TelegramFullController {
             `⚙️ *PENGATURAN*\n\n` +
             `${isOwner ? '👑 Owner Mode\n\n' : ''}` +
             `Pilih menu:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    showMigrationMenu(chatId) {
+        const keyboard = [
+            [
+                { text: '📤 Backup Data', callback_data: 'migration_backup' },
+                { text: '📥 Impor Data', callback_data: 'migration_import' }
+            ],
+            [{ text: '🔙 Kembali', callback_data: 'pengaturan_menu' }]
+        ];
+
+        this.bot.sendMessage(chatId,
+            `📦 *MIGRASI / BACKUP DATA*\n\n` +
+            `Fitur ini memungkinkan Anda mencadangkan seluruh data (Wallet, RPC, Port, dan Morse) ke dalam satu file terenkripsi yang dikirim langsung ke Telegram Anda.\n\n` +
+            `• *Backup*: Membuat file cadangan terenkripsi password.\n` +
+            `• *Impor*: Memulihkan data dari file cadangan yang diunggah.\n\n` +
+            `Pilih aksi di bawah:`,
             { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
         );
     }
@@ -1249,8 +1278,8 @@ class TelegramFullController {
                         { text: '🗑️ Hapus Wallet', callback_data: 'wallet_delete_menu' }
                     ],
                     [
-                        { text: '💰 Cek Balance', callback_data: 'wallet_balance' },
-                        { text: '📊 TX Stats', callback_data: 'wallet_stats' }
+                        { text: '🌐 Kelola DApps', callback_data: 'dapps_menu' },
+                        { text: '💰 Cek Balance', callback_data: 'wallet_stats' }
                     ],
                     [
                         { text: '🔙 Main Menu', callback_data: 'main_menu' }
@@ -3029,10 +3058,6 @@ class TelegramFullController {
                 inline_keyboard: [
                     [
                         { text: '🤖 Status Bot', callback_data: 'info_status' },
-                        { text: '💰 Cek Balance', callback_data: 'wallet_balance' }
-                    ],
-                    [
-                        { text: '📊 TX Stats', callback_data: 'wallet_stats' },
                         { text: 'ℹ️ Info RPC', callback_data: 'rpc_info' }
                     ],
                     [
@@ -3519,6 +3544,12 @@ class TelegramFullController {
             case 'awaiting_dapp_timer_input':
                 await this.processDappTimerInput(cryptoApp, chatId, text, msg);
                 break;
+            case 'migration_awaiting_backup_password':
+                await this.processMigrationBackupPassword(chatId, text, msg);
+                break;
+            case 'migration_awaiting_import_password':
+                await this.processMigrationImportPassword(chatId, text, userState, msg);
+                break;
         }
     }
 
@@ -3763,6 +3794,40 @@ class TelegramFullController {
             // ── Pengaturan callbacks ──
             else if (data === 'pengaturan_menu') {
                 this.showPengaturanMenu(chatId);
+            }
+            else if (data === 'migration_menu') {
+                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                this.showMigrationMenu(chatId);
+            }
+            else if (data === 'migration_backup') {
+                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                this.userStates.set(chatId, { action: 'migration_awaiting_backup_password' });
+                this.bot.sendMessage(chatId,
+                    `📤 *BACKUP DATA — BUAT PASSWORD*\n\n` +
+                    `Silakan masukkan password pengaman untuk enkripsi file backup Anda. Password ini wajib diingat untuk proses pemulihan/impor data nanti.\n\n` +
+                    `_Ketik password baru Anda di bawah ini:_`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[{ text: '❌ Batal', callback_data: 'migration_menu' }]]
+                        }
+                    }
+                );
+            }
+            else if (data === 'migration_import') {
+                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                this.userStates.set(chatId, { action: 'awaiting_backup_upload' });
+                this.bot.sendMessage(chatId,
+                    `📥 *IMPOR DATA — UNGGAH FILE CADANGAN*\n\n` +
+                    `Silakan kirim/unggah file backup Anda (\`.enc\`) yang ingin dipulihkan ke chat ini.\n\n` +
+                    `_Menunggu file backup..._`,
+                    {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [[{ text: '❌ Batal', callback_data: 'migration_menu' }]]
+                        }
+                    }
+                );
             }
             // [v19.2] DApp Approval Toggle
             else if (data === 'dapp_approval_toggle') {
@@ -4646,6 +4711,54 @@ class TelegramFullController {
         if (!document) return;
 
         const fileName = document.file_name || '';
+        const userState = this.userStates.get(chatId);
+
+        // Intersepsi jika user sedang menunggu upload file backup
+        if (userState && userState.action === 'awaiting_backup_upload') {
+            const statusMsg = await this.bot.sendMessage(
+                chatId,
+                `⏳ *Mengunduh file backup '${fileName}'...*`,
+                { parse_mode: 'Markdown' }
+            );
+
+            try {
+                const fileLink = await this.bot.getFileLink(document.file_id);
+                const fileContent = await this._fetchFileContent(fileLink);
+
+                const parsed = JSON.parse(fileContent);
+                if (!parsed || !parsed.salt || !parsed.iv || !parsed.ciphertext) {
+                    throw new Error('Format isi file backup tidak valid');
+                }
+
+                try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+
+                // Pindah ke state meminta password dekripsi
+                this.userStates.set(chatId, {
+                    action: 'migration_awaiting_import_password',
+                    backupData: parsed,
+                    attempts: 0
+                });
+
+                await this.bot.sendMessage(chatId,
+                    `🔑 *IMPOR DATA — MASUKKAN PASSWORD*\n\n` +
+                    `File backup berhasil diterima.\n` +
+                    `Silakan masukkan password dekripsi Anda:\n\n` +
+                    `_Percobaan: 1 dari 3_`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            } catch (err) {
+                try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+                this.bot.sendMessage(
+                    chatId,
+                    `⚠️ *File Backup Tidak Valid!*\n\n` +
+                    `File yang diunggah bukan file backup Fastarx yang valid atau isi file rusak.\n\n` +
+                    `Silakan unggah kembali file backup yang benar.`,
+                    { parse_mode: 'Markdown' }
+                );
+                return;
+            }
+        }
 
         if (!fileName.toLowerCase().endsWith('.txt')) {
             this.bot.sendMessage(
@@ -4760,6 +4873,110 @@ class TelegramFullController {
                 `❌ *Gagal memproses file!*\nTerjadi kesalahan internal: \`${error.message}\``,
                 { parse_mode: 'Markdown' }
             );
+        }
+    }
+
+    async processMigrationBackupPassword(chatId, password, msg) {
+        // Hapus pesan password dari chat demi keamanan
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
+        const statusMsg = await this.bot.sendMessage(chatId, '⏳ *Sedang memproses dan mengenkripsi data backup Anda...*', { parse_mode: 'Markdown' });
+
+        try {
+            const dataDir = path.join(__dirname, '../data');
+            const backupBuffer = backupHelper.createBackup(chatId, password, dataDir);
+
+            // Kirim file backup ke Telegram
+            await this.bot.sendDocument(
+                chatId,
+                backupBuffer,
+                {
+                    caption: `🔐 *BACKUP DATA FASTARX BOT BERHASIL!*\n\n` +
+                             `File ini berisi data Wallet, RPC, Port, dan Morse Anda dalam bentuk terenkripsi.\n\n` +
+                             `⚠️ *PERINGATAN*: Jangan membagikan file ini kepada siapa pun. Jangan lupa password yang telah Anda buat.`
+                },
+                {
+                    filename: `fastarx_backup_${chatId}.enc`,
+                    contentType: 'application/octet-stream'
+                }
+            );
+
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            this.userStates.delete(chatId);
+
+            this.bot.sendMessage(chatId, '✅ *Proses Selesai.* File backup telah dikirim di atas.', { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            console.error('❌ Gagal memproses backup:', error);
+            this.bot.sendMessage(chatId, `❌ *Gagal memproses backup!*\nTerjadi kesalahan: \`${error.message}\``, { parse_mode: 'Markdown' });
+            this.userStates.delete(chatId);
+        }
+    }
+
+    async processMigrationImportPassword(chatId, password, userState, msg) {
+        // Hapus pesan password dari chat demi keamanan
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
+        const statusMsg = await this.bot.sendMessage(chatId, '⏳ *Sedang mendekripsi dan memulihkan data Anda...*', { parse_mode: 'Markdown' });
+
+        try {
+            const dataDir = path.join(__dirname, '../data');
+            const backupData = userState.backupData;
+
+            // Panggil restoreBackup
+            backupHelper.restoreBackup(chatId, password, backupData, dataDir);
+
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            this.userStates.delete(chatId);
+
+            // Re-inisialisasi / reload sesi cryptoApp agar memuat data baru secara real-time
+            const oldSession = this.userSessions.get(chatId);
+            if (oldSession) {
+                try {
+                    await oldSession.cleanup();
+                } catch (e) {
+                    console.error('⚠️ Gagal cleanup sesi lama saat impor:', e.message);
+                }
+            }
+
+            // Inisialisasi ulang sesi baru dengan data yang sudah di-impor
+            try {
+                const newSession = await this.initializeCryptoApp(chatId);
+                this.userSessions.set(chatId, newSession);
+            } catch (e) {
+                console.error('⚠️ Gagal re-inisialisasi sesi cryptoApp baru setelah impor:', e.message);
+            }
+
+            await this.bot.sendMessage(chatId,
+                `✅ *IMPOR BERHASIL!*\n\n` +
+                `Seluruh data Anda (Wallet, RPC, Port, dan Morse) telah berhasil didekripsi dan dipulihkan ke akun ini.\n\n` +
+                `Sesi bot Anda telah disegarkan otomatis.`,
+                { parse_mode: 'Markdown' }
+            );
+
+        } catch (error) {
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            
+            userState.attempts = (userState.attempts || 0) + 1;
+            const remaining = 3 - userState.attempts;
+
+            if (remaining > 0) {
+                this.bot.sendMessage(chatId,
+                    `❌ *Password Dekripsi Salah!*\n\n` +
+                    `Silakan masukkan password yang benar.\n\n` +
+                    `_Sisa percobaan: ${remaining} dari 3_`,
+                    { parse_mode: 'Markdown' }
+                );
+            } else {
+                this.userStates.delete(chatId);
+                this.bot.sendMessage(chatId,
+                    `🚫 *Batas Percobaan Habis!*\n\n` +
+                    `Anda salah memasukkan password sebanyak 3 kali.\n` +
+                    `Proses impor dibatalkan. Silakan unggah kembali file backup Anda jika ingin mencoba lagi.`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
         }
     }
 
