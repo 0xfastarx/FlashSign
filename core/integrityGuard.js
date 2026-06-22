@@ -298,6 +298,48 @@ class IntegrityGuard {
         }
     }
 
+    async _requestOtpFromController(changeReason = 'file_modified') {
+        const port = process.env.CONTROLLER_HTTP_PORT || 3099;
+        return new Promise((resolve) => {
+            const http = require('http');
+            const body = JSON.stringify({ changeReason });
+            const req = http.request({
+                hostname: '127.0.0.1',
+                port: port,
+                path: '/request-otp-verification',
+                method: 'POST',
+                timeout: 65000,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(body)
+                }
+            }, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(data);
+                        resolve(parsed);
+                    } catch (err) {
+                        resolve({ verified: false, reason: 'invalid_json' });
+                    }
+                });
+            });
+
+            req.on('error', (err) => {
+                resolve({ verified: false, reason: 'controller_offline', error: err.message });
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                resolve({ verified: false, reason: 'timeout' });
+            });
+
+            req.write(body);
+            req.end();
+        });
+    }
+
     /**
      * Memulihkan sistem jika file lock hilang
      */
@@ -469,32 +511,53 @@ class IntegrityGuard {
         if (staticAdminPassword) {
             console.log('\n🔄 Deteksi perubahan konfigurasi dari setup.js! Memerlukan verifikasi OTP...');
 
-            const setup2FASecret = this._readSetup2FASecretStatic();
-            if (setup2FASecret) {
-                console.log('\x1b[38;5;51m📱 Buka Google Authenticator → [Fastarx Bot - Setup]\x1b[0m');
-                const otpInput = await this._promptOTP('\x1b[38;5;141m🔑 Masukkan kode 6 digit OTP untuk mengonfirmasi perubahan .env: \x1b[0m');
-                if (!this._verifyOTPInline(setup2FASecret, otpInput)) {
-                    console.error('\x1b[38;5;203m❌ ACCESS DENIED: Kode OTP salah! Perubahan .env dibatalkan.\x1b[0m');
-                    process.exit(1);
-                }
+            let verified = false;
+
+            // Coba verifikasi lewat Controller Bot terlebih dahulu
+            console.log('🔄 Menghubungi Controller Bot untuk verifikasi OTP via Telegram...');
+            const controllerResult = await this._requestOtpFromController('config_changed');
+
+            if (controllerResult.verified) {
+                console.log('✅ Verifikasi OTP disetujui via Telegram.');
+                verified = true;
+            } else if (controllerResult.reason !== 'controller_offline') {
+                console.error(`\x1b[38;5;203m❌ ACCESS DENIED: Verifikasi Telegram gagal (${controllerResult.reason || 'Ditolak'}). Perubahan .env dibatalkan.\x1b[0m`);
+                process.exit(1);
             } else {
-                console.log('\x1b[38;5;214m⚠️  Setup-2FA belum dikonfigurasi. Menggunakan Password Admin untuk konfirmasi...\x1b[0m');
-                const input = await this._promptPassword('🔑 Masukkan Password Admin untuk mengonfirmasi perubahan .env: ');
-                if (input !== staticAdminPassword) {
-                    console.error('❌ ACCESS DENIED: Password salah! Perubahan .env dibatalkan.');
-                    process.exit(1);
+                // Fallback ke prompt terminal manual
+                console.log('ℹ️  Controller Bot offline. Fallback ke verifikasi terminal...');
+                
+                const setup2FASecret = this._readSetup2FASecretStatic();
+                if (setup2FASecret) {
+                    console.log('\x1b[38;5;51m📱 Buka Google Authenticator → [Fastarx Bot - Setup]\x1b[0m');
+                    const otpInput = await this._promptOTP('\x1b[38;5;141m🔑 Masukkan kode 6 digit OTP untuk mengonfirmasi perubahan .env: \x1b[0m');
+                    if (!this._verifyOTPInline(setup2FASecret, otpInput)) {
+                        console.error('\x1b[38;5;203m❌ ACCESS DENIED: Kode OTP salah! Perubahan .env dibatalkan.\x1b[0m');
+                        process.exit(1);
+                    }
+                    verified = true;
+                } else {
+                    console.log('\x1b[38;5;214m⚠️  Setup-2FA belum dikonfigurasi. Menggunakan Password Admin untuk konfirmasi...\x1b[0m');
+                    const input = await this._promptPassword('🔑 Masukkan Password Admin untuk mengonfirmasi perubahan .env: ');
+                    if (input !== staticAdminPassword) {
+                        console.error('❌ ACCESS DENIED: Password salah! Perubahan .env dibatalkan.');
+                        process.exit(1);
+                    }
+                    verified = true;
                 }
             }
 
-            try {
-                // Re-enkripsi dari static key (hash kosong) ke currentHash
-                this.reencryptEnv('', currentHash, staticAdminPassword);
-                this.saveNewApprovedHash(currentHash, staticAdminPassword);
-                console.log('✅ Perubahan konfigurasi berhasil diverifikasi dan diamankan!');
-                return;
-            } catch (err) {
-                console.error('❌ Gagal memproses data setup baru:', err.message);
-                process.exit(1);
+            if (verified) {
+                try {
+                    // Re-enkripsi dari static key (hash kosong) ke currentHash
+                    this.reencryptEnv('', currentHash, staticAdminPassword);
+                    this.saveNewApprovedHash(currentHash, staticAdminPassword);
+                    console.log('✅ Perubahan konfigurasi berhasil diverifikasi dan diamankan!');
+                    return;
+                } catch (err) {
+                    console.error('❌ Gagal memproses data setup baru:', err.message);
+                    process.exit(1);
+                }
             }
         }
 
@@ -514,34 +577,49 @@ class IntegrityGuard {
         if (currentHash !== approvedHash) {
             console.log('\n\x1b[38;5;214m⚠️  PERINGATAN KEAMANAN: Modifikasi file atau file baru terdeteksi!\x1b[0m');
 
-            // Coba baca Setup-2FA secret dari .env
-            const setup2FASecret = this._readSetup2FASecret(approvedHash);
-
             let verified = false;
 
-            if (setup2FASecret) {
-                // .env baru — verifikasi dengan OTP
-                console.log('\x1b[38;5;51m📱 Buka Google Authenticator → [Fastarx Bot - Setup]\x1b[0m');
-                const otpInput = await this._promptOTP('\x1b[38;5;141m🔑 Masukkan kode 6 digit OTP: \x1b[0m');
-                if (!this._verifyOTPInline(setup2FASecret, otpInput)) {
-                    console.error('\x1b[38;5;203m❌ ACCESS DENIED: Kode OTP salah! Bot ditutup.\x1b[0m');
-                    process.exit(1);
-                }
+            // Coba verifikasi lewat Controller Bot terlebih dahulu
+            console.log('🔄 Menghubungi Controller Bot untuk verifikasi OTP via Telegram...');
+            const controllerResult = await this._requestOtpFromController('file_modified');
+
+            if (controllerResult.verified) {
+                console.log('✅ Verifikasi OTP disetujui via Telegram.');
                 verified = true;
+            } else if (controllerResult.reason !== 'controller_offline') {
+                console.error(`\x1b[38;5;203m❌ ACCESS DENIED: Verifikasi Telegram gagal (${controllerResult.reason || 'Ditolak'}). Bot ditutup.\x1b[0m`);
+                process.exit(1);
             } else {
-                // .env lama — fallback ke Password Admin
-                console.log('\x1b[38;5;214m⚠️  Setup-2FA belum dikonfigurasi. Menggunakan Password Admin (mode lama).\x1b[0m');
-                const adminPassword = this._loadAdminPasswordFromMarker(approvedHash);
-                if (!adminPassword) {
-                    console.error('❌ ERROR: Master password tidak dapat dimuat. Bot dikunci.');
-                    process.exit(1);
+                // Fallback ke prompt terminal manual
+                console.log('ℹ️  Controller Bot offline atau tidak dapat dijangkau. Fallback ke verifikasi terminal...');
+
+                // Coba baca Setup-2FA secret dari .env
+                const setup2FASecret = this._readSetup2FASecret(approvedHash);
+
+                if (setup2FASecret) {
+                    // .env baru — verifikasi dengan OTP
+                    console.log('\x1b[38;5;51m📱 Buka Google Authenticator → [Fastarx Bot - Setup]\x1b[0m');
+                    const otpInput = await this._promptOTP('\x1b[38;5;141m🔑 Masukkan kode 6 digit OTP: \x1b[0m');
+                    if (!this._verifyOTPInline(setup2FASecret, otpInput)) {
+                        console.error('\x1b[38;5;203m❌ ACCESS DENIED: Kode OTP salah! Bot ditutup.\x1b[0m');
+                        process.exit(1);
+                    }
+                    verified = true;
+                } else {
+                    // .env lama — fallback ke Password Admin
+                    console.log('\x1b[38;5;214m⚠️  Setup-2FA belum dikonfigurasi. Menggunakan Password Admin (mode lama).\x1b[0m');
+                    const adminPassword = this._loadAdminPasswordFromMarker(approvedHash);
+                    if (!adminPassword) {
+                        console.error('❌ ERROR: Master password tidak dapat dimuat. Bot dikunci.');
+                        process.exit(1);
+                    }
+                    const input = await this._promptPassword('🔑 Masukkan Password Admin untuk menyetujui perubahan: ');
+                    if (input !== adminPassword) {
+                        console.error('❌ ACCESS DENIED: Password salah! Bot ditutup.');
+                        process.exit(1);
+                    }
+                    verified = true;
                 }
-                const input = await this._promptPassword('🔑 Masukkan Password Admin untuk menyetujui perubahan: ');
-                if (input !== adminPassword) {
-                    console.error('❌ ACCESS DENIED: Password salah! Bot ditutup.');
-                    process.exit(1);
-                }
-                verified = true;
             }
 
             if (verified) {

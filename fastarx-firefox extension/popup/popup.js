@@ -89,6 +89,7 @@ async function renderConfig() {
   if (!config) return;
   window.setMode(config.mode || 'localhost');
   $('inputVpsHost').value = config.vpsHost || '';
+  $('inputRpcPassword').value = config.rpcPassword || '';
   renderPortList();
 }
 
@@ -197,6 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
   $('btnSaveConfig').addEventListener('click', async function() {
     var vpsHost = $('inputVpsHost').value.trim();
+    var rpcPassword = $('inputRpcPassword').value;
     if (currentMode === 'vps' && !vpsHost) {
       toast('Masukkan IP/Host VPS terlebih dahulu', 'err');
       return;
@@ -204,6 +206,7 @@ document.addEventListener('DOMContentLoaded', function() {
     var newConfig = Object.assign({}, config, {
       mode: currentMode,
       vpsHost: vpsHost,
+      rpcPassword: rpcPassword,
       activePort: config ? (config.activePort || 8545) : 8545,
       ports: config ? (config.ports || []) : []
     });
@@ -221,9 +224,11 @@ document.addEventListener('DOMContentLoaded', function() {
     $('btnTestConn').disabled = true;
     $('btnTestConn').textContent = '⏳ Testing...';
     var vpsHost = $('inputVpsHost').value.trim();
+    var rpcPassword = $('inputRpcPassword').value;
     var testConfig = Object.assign({}, config, {
       mode: currentMode,
       vpsHost: vpsHost,
+      rpcPassword: rpcPassword,
       activePort: config ? (config.activePort || 8545) : 8545
     });
     await sendMsg('saveConfig', { config: testConfig });

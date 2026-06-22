@@ -15,6 +15,7 @@ const KEY_BOT_STATUS = 'fastarx_bot_status';
 const DEFAULT_CONFIG = {
   mode: 'localhost',
   vpsHost: '',
+  rpcPassword: '',
   activePort: 8545,
   ports: [
     { port: 8545, label: 'Port 8545 (Default)', isPermanent: true },
@@ -65,13 +66,19 @@ async function fetchBotRpc(method, params = [], rpcUrl, origin = null) {
   // Timeout 120 detik — DApp Approval bisa menunggu hingga 60 detik untuk persetujuan user
   const timeout = setTimeout(() => controller.abort(), 120000);
   try {
+    const config = await loadConfig();
+    const rpcPassword = config.rpcPassword || '';
     const bodyObj = { jsonrpc: '2.0', id: Date.now(), method, params };
     if (origin) {
       bodyObj.origin = origin;
     }
+    const headers = { 'Content-Type': 'application/json' };
+    if (rpcPassword) {
+      headers['Authorization'] = 'Bearer ' + rpcPassword;
+    }
     const res = await fetch(rpcUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(bodyObj),
       signal: controller.signal
     });

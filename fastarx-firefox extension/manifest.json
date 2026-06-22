@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "FA STARX Bot Connector",
-  "version": "4.0.0",
+  "version": "20.0.0",
   "description": "Auto-approve transaksi via FA STARX Bot RPC Inject — support Localhost & VPS mode",
   "permissions": [
     "storage",

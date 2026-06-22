@@ -834,7 +834,7 @@ class CryptoAutoTx {
             : '🔴 OFF';
 
         console.log('\n' + '='.repeat(60));
-        console.log(`🚀 FA STARX BOT v19.0 (Session: ${this.sessionId})`);
+        console.log(`🚀 FA STARX BOT v20.0 (Session: ${this.sessionId})`);
         console.log('='.repeat(60));
         console.log('⛓️ Chain ID  :', this.currentChainId);
         console.log('🌐 RPC      :', this.currentRpcName);
@@ -1197,7 +1197,7 @@ class CryptoAutoTx {
 
     // --- Server lifecycle ---
 
-    async startRpcServer(port, vpsMode = null) {
+    async startRpcServer(port, vpsMode = null, password = null) {
         const portNum = parseInt(port);
         if (isNaN(portNum) || portNum < 1024 || portNum > 65535) {
             console.log(`[RPC Ports] ❌ Port ${port} tidak valid.`);
@@ -1213,7 +1213,7 @@ class CryptoAutoTx {
         const cfg = this.rpcPortsConfig[portNum] || {};
         const useVpsMode = vpsMode !== null ? vpsMode : (cfg.vpsMode || false);
 
-        const server = new MetaMaskRpcServer(this, portNum, useVpsMode);
+        const server = new MetaMaskRpcServer(this, portNum, useVpsMode, password);
         const started = await server.start();
 
         if (started) {
@@ -1406,8 +1406,13 @@ class CryptoAutoTx {
                 }
             } else {
                 if (choice === '1') {
+                    const pass = await this.question('Masukkan password keamanan untuk port ini: ');
+                    if (!pass.trim()) {
+                        console.log('❌ Password tidak boleh kosong.');
+                        continue;
+                    }
                     console.log(`⏳ Memulai port ${portStatus.port} dalam mode ${cfg.vpsMode ? 'VPS' : 'Localhost'}...`);
-                    const ok = await this.startRpcServer(portStatus.port, cfg.vpsMode);
+                    const ok = await this.startRpcServer(portStatus.port, cfg.vpsMode, pass.trim());
                     if (ok) {
                         portStatus.isRunning = true;
                         portStatus.statusIcon = '🟢';
@@ -1423,8 +1428,13 @@ class CryptoAutoTx {
                     this._saveRpcPortsConfig();
                     portStatus.vpsMode = newVps;
                     portStatus.modeLabel = newVps ? '🌐 VPS' : '💻 Localhost';
+                    const pass = await this.question('Masukkan password keamanan untuk port ini: ');
+                    if (!pass.trim()) {
+                        console.log('❌ Password tidak boleh kosong.');
+                        continue;
+                    }
                     console.log(`⏳ Memulai port ${portStatus.port}...`);
-                    const ok = await this.startRpcServer(portStatus.port, newVps);
+                    const ok = await this.startRpcServer(portStatus.port, newVps, pass.trim());
                     if (ok) {
                         portStatus.isRunning = true;
                         portStatus.statusIcon = '🟢';
@@ -1496,6 +1506,7 @@ class CryptoAutoTx {
         }
         console.log(`   Chain ID     : ${info.chainId}`);
         console.log(`   Currency     : ETH`);
+        console.log(`   Password RPC : ${info.password || '-'}`);
         console.log('3. Simpan, lalu ganti network ke network tersebut');
         console.log('4. Setiap transaksi dari DApp akan otomatis di-approve bot!');
         console.log('='.repeat(55));

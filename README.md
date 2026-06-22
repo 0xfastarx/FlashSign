@@ -9,7 +9,7 @@
 ╚═╝     ╚═╝  ╚═╝    ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═╝    ╚═════╝  ╚═════╝    ╚═╝  
 ```
 
-# 🚀 FA STARX BOT `v19.0.0`
+# 🚀 FA STARX BOT `v20.0.0`
 
 **Multi-Chain Auto-Transaction Bot** dengan WalletConnect, MetaMask RPC Inject, dan kendali penuh via Telegram
 

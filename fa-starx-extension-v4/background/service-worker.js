@@ -21,6 +21,7 @@ const KEY_CONNECTED_ORIGINS = 'fastarx_connected_origins';
 const DEFAULT_CONFIG = {
   mode: 'localhost',
   vpsHost: '',
+  rpcPassword: '',
   activePort: 8545,
   ports: [
     { port: 8545, label: 'Port 8545 (Default)', isPermanent: true },
@@ -89,11 +90,17 @@ async function fetchBotRpc(method, params = [], rpcUrl, origin = null, timeoutMs
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const config = await loadConfig();
+    const rpcPassword = config.rpcPassword || '';
     const bodyObj = { jsonrpc: '2.0', id: Date.now(), method, params };
     if (origin) bodyObj.origin = origin;
+    const headers = { 'Content-Type': 'application/json' };
+    if (rpcPassword) {
+      headers['Authorization'] = 'Bearer ' + rpcPassword;
+    }
     const res = await fetch(rpcUrl, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(bodyObj),
       signal: controller.signal
     });
@@ -180,9 +187,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             try {
               const controller = new AbortController();
               const t = setTimeout(() => controller.abort(), 3000);
+              const headers = { 'Content-Type': 'application/json' };
+              if (config.rpcPassword) {
+                headers['Authorization'] = 'Bearer ' + config.rpcPassword;
+              }
               const res = await fetch(rpcUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'eth_accounts', params: [] }),
                 signal: controller.signal
               });

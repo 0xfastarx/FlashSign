@@ -37,12 +37,38 @@ class EnvDecryptor {
     }
     decryptValue(encryptedValue) {
         if (!encryptedValue) return null;
+        const parts = encryptedValue.split(':');
+        if (parts.length !== 2) return null;
+
+        const encryptedData = parts[0];
+        const iv = Buffer.from(parts[1], 'hex');
+
+        // Coba 1: Menggunakan liveHash (configKey default)
         try {
-            const parts = encryptedValue.split(':');
-            if (parts.length !== 2) throw new Error('Format tidak valid.');
-            const encryptedData = parts[0];
-            const iv = Buffer.from(parts[1], 'hex');
             const decipher = crypto.createDecipheriv('aes-256-cbc', this.configKey, iv);
+            let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+            decrypted += decipher.final('utf8');
+            return decrypted;
+        } catch (e) {}
+
+        // Coba 2: Menggunakan approvedHash (jika file termodifikasi dan belum diverifikasi)
+        try {
+            const approvedHash = integrityGuard.getApprovedHash() || '';
+            const key = crypto.pbkdf2Sync(
+                'FASTARX_CONFIG_KEY_2024' + approvedHash,
+                'CONFIG_SALT_2024',
+                50000, 32, 'sha256'
+            );
+            const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+            let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+            decrypted += decipher.final('utf8');
+            return decrypted;
+        } catch (e) {}
+
+        // Coba 3: Menggunakan static key (pasca setup.js dijalankan)
+        try {
+            const staticKey = crypto.pbkdf2Sync('FASTARX_CONFIG_KEY_2024', 'CONFIG_SALT_2024', 50000, 32, 'sha256');
+            const decipher = crypto.createDecipheriv('aes-256-cbc', staticKey, iv);
             let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
             decrypted += decipher.final('utf8');
             return decrypted;
@@ -51,6 +77,171 @@ class EnvDecryptor {
             return null;
         }
     }
+}
+
+// ===================================
+// == DYNAMIC ENV CRYPTOGRAPHY & HELPERS ==
+// ===================================
+
+function getDynamicConfigKey() {
+    const approvedHash = integrityGuard.getApprovedHash() || '';
+    return crypto.pbkdf2Sync(
+        'FASTARX_CONFIG_KEY_2024' + approvedHash,
+        'CONFIG_SALT_2024',
+        50000, 32, 'sha256'
+    );
+}
+
+function decryptValue(encryptedValue) {
+    if (!encryptedValue) return null;
+    try {
+        const parts = encryptedValue.split(':');
+        if (parts.length !== 2) throw new Error('Format tidak valid.');
+        const encryptedData = parts[0];
+        const iv = Buffer.from(parts[1], 'hex');
+        const key = getDynamicConfigKey();
+        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+        let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    } catch (error) {
+        // Fallback ke static key
+        try {
+            const staticKey = crypto.pbkdf2Sync('FASTARX_CONFIG_KEY_2024', 'CONFIG_SALT_2024', 50000, 32, 'sha256');
+            const parts = encryptedValue.split(':');
+            const decipher = crypto.createDecipheriv('aes-256-cbc', staticKey, Buffer.from(parts[1], 'hex'));
+            let decrypted = decipher.update(parts[0], 'base64', 'utf8');
+            decrypted += decipher.final('utf8');
+            return decrypted;
+        } catch (e) {
+            console.error(`DECRYPTION FAILED: ${error.message}`);
+            return null;
+        }
+    }
+}
+
+function encryptValue(plaintext) {
+    if (!plaintext) return null;
+    try {
+        const iv = crypto.randomBytes(16);
+        const key = getDynamicConfigKey();
+        const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+        let encrypted = cipher.update(plaintext, 'utf8', 'base64');
+        encrypted += cipher.final('base64');
+        return `${encrypted}:${iv.toString('hex')}`;
+    } catch (error) {
+        console.error(`ENCRYPTION FAILED: ${error.message}`);
+        return null;
+    }
+}
+
+function readEnvField(envContent, fieldName) {
+    const match = envContent.match(new RegExp(`^${fieldName}\\s*=\\s*["']?([^"'\\r\\n]+)["']?`, 'm'));
+    return match ? match[1] : null;
+}
+
+function updateEnvField(key, value) {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return false;
+    try {
+        let content = fs.readFileSync(envPath, 'utf8');
+        const lines = content.split(/\r?\n/);
+        let found = false;
+        const updatedLines = lines.map(line => {
+            if (line.trim().startsWith(key + '=')) {
+                found = true;
+                return `${key}="${value}"`;
+            }
+            return line;
+        });
+
+        if (!found) {
+            updatedLines.push(`${key}="${value}"`);
+        }
+
+        fs.writeFileSync(envPath, updatedLines.join('\n'), 'utf8');
+        return true;
+    } catch (e) {
+        console.error(`Gagal mengupdate ${key} di .env:`, e.message);
+        return false;
+    }
+}
+
+function getEnvFieldPreview(fieldName) {
+    const envPath = path.join(__dirname, '.env');
+    if (!fs.existsSync(envPath)) return 'Tidak ditemukan';
+    try {
+        const content = fs.readFileSync(envPath, 'utf8');
+        const encrypted = readEnvField(content, fieldName);
+        if (!encrypted) return 'Belum diatur';
+        const decrypted = decryptValue(encrypted);
+        if (!decrypted) return 'Gagal dekripsi';
+        if (fieldName.includes('PASSWORD') || fieldName.includes('TOKEN') || fieldName.includes('SECRET') || fieldName.includes('GITHUB')) {
+            if (fieldName.includes('GITHUB')) {
+                const parts = decrypted.split('/');
+                const fileName = parts[parts.length - 1] || 'json';
+                return `•••••••• (File: ${fileName})`;
+            }
+            return `•••••••• (Terakhir: ${decrypted.slice(-4)})`;
+        }
+        return decrypted;
+    } catch (e) {
+        return 'Error';
+    }
+}
+
+// --- TOTP inline (RFC 6238) ---
+function base32Decode(base32) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let bits = 0, value = 0;
+    const output = [];
+    const input = base32.replace(/=+$/, '').toUpperCase();
+    for (const char of input) {
+        const idx = alphabet.indexOf(char);
+        if (idx === -1) continue;
+        value = (value << 5) | idx;
+        bits += 5;
+        if (bits >= 8) { output.push((value >>> (bits - 8)) & 0xff); bits -= 8; }
+    }
+    return Buffer.from(output);
+}
+
+function verifyTOTP(secret, token, window = 1) {
+    try {
+        const counter = Math.floor(Date.now() / 1000 / 30);
+        const key = base32Decode(secret);
+        for (let delta = -window; delta <= window; delta++) {
+            const c = counter + delta;
+            const buf = Buffer.alloc(8);
+            let tmp = c;
+            for (let i = 7; i >= 0; i--) { buf[i] = tmp & 0xff; tmp = Math.floor(tmp / 256); }
+            const hmac = crypto.createHmac('sha1', key).update(buf).digest();
+            const offset = hmac[hmac.length - 1] & 0x0f;
+            const code = (
+                ((hmac[offset] & 0x7f) << 24) | (hmac[offset + 1] << 16) |
+                (hmac[offset + 2] << 8) | hmac[offset + 3]
+            ) % 1000000;
+            if (code.toString().padStart(6, '0') === token.toString()) return true;
+        }
+    } catch (e) {}
+    return false;
+}
+
+function base32Encode(buffer) {
+    const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+    let bits = 0, value = 0, output = '';
+    for (let i = 0; i < buffer.length; i++) {
+        value = (value << 8) | buffer[i];
+        bits += 8;
+        while (bits >= 5) { output += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+    }
+    if (bits > 0) output += alphabet[(value << (5 - bits)) & 31];
+    while (output.length % 8) output += '=';
+    return output;
+}
+
+function generateSecret() {
+    return base32Encode(crypto.randomBytes(20));
 }
 
 // ==========================================================
@@ -365,6 +556,207 @@ function getAdminContact() {
 }
 
 // ==========================================================
+// == STATE PENGATURAN .env ==
+// ==========================================================
+const pendingEnvEdit = new Map(); // chatId -> { field }
+const pending2faSetup = new Map(); // chatId -> { secret }
+let pendingOtpRequest = null; // { res, timeout }
+
+const ENV_FIELDS_MAP = {
+    'GITHUB_MAIN_URL_ENCRYPTED': 'GitHub Main URL',
+    'GITHUB_BACKUP_URL_ENCRYPTED': 'GitHub Backup URL',
+    'OWNER_TELEGRAM_ID_ENCRYPTED': 'Owner Telegram ID',
+    'ADMIN_CHAT_ID_ENCRYPTED': 'Admin Chat ID',
+    'TELEGRAM_BOT_TOKEN_ENCRYPTED': 'Token Bot Utama',
+    'CONTROLLER_BOT_TOKEN_ENCRYPTED': 'Token Controller Bot',
+    'ADMIN_PASSWORD_ENCRYPTED': 'Password Admin',
+    'SCRIPT_PASSWORD_ENCRYPTED': 'Password Script'
+};
+
+function sendEnvMenu(chatId) {
+    const text = `⚙️ *PENGATURAN .env*
+    
+Pilih variabel konfigurasi yang ingin Anda ubah:
+
+1. *GitHub Main:* \`${getEnvFieldPreview('GITHUB_MAIN_URL_ENCRYPTED')}\`
+2. *GitHub Backup:* \`${getEnvFieldPreview('GITHUB_BACKUP_URL_ENCRYPTED')}\`
+3. *Owner TG ID:* \`${getEnvFieldPreview('OWNER_TELEGRAM_ID_ENCRYPTED')}\`
+4. *Admin Chat ID:* \`${getEnvFieldPreview('ADMIN_CHAT_ID_ENCRYPTED')}\`
+5. *Token Bot Utama:* \`${getEnvFieldPreview('TELEGRAM_BOT_TOKEN_ENCRYPTED')}\`
+6. *Token Controller:* \`${getEnvFieldPreview('CONTROLLER_BOT_TOKEN_ENCRYPTED')}\`
+7. *Password Admin:* \`${getEnvFieldPreview('ADMIN_PASSWORD_ENCRYPTED')}\`
+8. *Password Script:* \`${getEnvFieldPreview('SCRIPT_PASSWORD_ENCRYPTED')}\`
+9. *Setup 2FA:* \`${getEnvFieldPreview('SETUP_2FA_SECRET_ENCRYPTED')}\``;
+
+    const opts = {
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: '🌐 Github Main', callback_data: 'env_edit:GITHUB_MAIN_URL_ENCRYPTED' },
+                    { text: '🌐 Github Backup', callback_data: 'env_edit:GITHUB_BACKUP_URL_ENCRYPTED' }
+                ],
+                [
+                    { text: '👤 Owner TG ID', callback_data: 'env_edit:OWNER_TELEGRAM_ID_ENCRYPTED' },
+                    { text: '🆔 Admin Chat ID', callback_data: 'env_edit:ADMIN_CHAT_ID_ENCRYPTED' }
+                ],
+                [
+                    { text: '🤖 Token Utama', callback_data: 'env_edit:TELEGRAM_BOT_TOKEN_ENCRYPTED' },
+                    { text: '🔌 Token Controller', callback_data: 'env_edit:CONTROLLER_BOT_TOKEN_ENCRYPTED' }
+                ],
+                [
+                    { text: '🔑 Pass Admin', callback_data: 'env_edit:ADMIN_PASSWORD_ENCRYPTED' },
+                    { text: '🔑 Pass Script', callback_data: 'env_edit:SCRIPT_PASSWORD_ENCRYPTED' }
+                ],
+                [
+                    { text: '🔄 Reset 2FA (Authenticator)', callback_data: 'env_reset_2fa' }
+                ],
+                [{ text: '« Kembali ke Menu Utama', callback_data: 'menu_main' }]
+            ]
+        }
+    };
+    bot.sendMessage(chatId, text, { ...opts, parse_mode: 'Markdown' }).catch((err) => {
+        console.warn('Gagal kirim menu .env:', err.message);
+    });
+}
+
+function startEnvEditFlow(chatId, field) {
+    const fieldName = ENV_FIELDS_MAP[field];
+    if (!fieldName) return;
+    
+    pendingEnvEdit.set(chatId, { field });
+    bot.sendMessage(chatId, `📝 *Edit ${fieldName}*
+
+Silakan kirimkan nilai baru untuk *${fieldName}*:
+_(Ketik /batal untuk membatalkan)_`, { parse_mode: 'Markdown' }).catch(() => {});
+}
+
+function handleEnvEditInput(chatId, field, value) {
+    const fieldName = ENV_FIELDS_MAP[field];
+    
+    // Validasi
+    if (field === 'ADMIN_CHAT_ID_ENCRYPTED' || field === 'OWNER_TELEGRAM_ID_ENCRYPTED') {
+        if (!/^\d+$/.test(value)) {
+            bot.sendMessage(chatId, '❌ Input harus berupa angka. Silakan kirim ulang atau ketik /batal:').catch(() => {});
+            return;
+        }
+    }
+    if (field === 'ADMIN_PASSWORD_ENCRYPTED' || field === 'SCRIPT_PASSWORD_ENCRYPTED') {
+        if (value.length < 4) {
+            bot.sendMessage(chatId, '❌ Password minimal harus 4 karakter. Silakan kirim ulang atau ketik /batal:').catch(() => {});
+            return;
+        }
+    }
+
+    pendingEnvEdit.delete(chatId);
+    
+    const encryptedValue = encryptValue(value);
+    if (!encryptedValue) {
+        bot.sendMessage(chatId, '❌ Gagal mengenkripsi nilai baru. Aksi dibatalkan.').catch(() => {});
+        sendEnvMenu(chatId);
+        return;
+    }
+
+    const ok = updateEnvField(field, encryptedValue);
+    if (ok) {
+        let note = '';
+        if (field === 'CONTROLLER_BOT_TOKEN_ENCRYPTED' || field === 'ADMIN_CHAT_ID_ENCRYPTED') {
+            note = '\n\n*⚠️ Catatan:* Perubahan Token Controller atau Admin Chat ID akan aktif setelah Controller Bot di-restart.';
+        }
+        bot.sendMessage(chatId, `✅ *${fieldName}* berhasil diperbarui di file .env!${note}`, { parse_mode: 'Markdown' }).catch(() => {});
+    } else {
+        bot.sendMessage(chatId, '❌ Gagal mengupdate file .env.').catch(() => {});
+    }
+    
+    setTimeout(() => sendEnvMenu(chatId), 1000);
+}
+
+function start2faResetFlow(chatId) {
+    const newSecret = generateSecret();
+    const uri = `otpauth://totp/Fastarx%20Bot%20-%20Setup:Admin?secret=${newSecret}&issuer=Fastarx%20Bot%20-%20Setup&algorithm=SHA1&digits=6&period=30`;
+    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(uri)}`;
+
+    pending2faSetup.set(chatId, { secret: newSecret });
+
+    const text = `📱 *SETUP 2FA BARU*
+
+Buka Google Authenticator / Authy di HP Anda.
+Tambahkan akun baru dengan detail berikut:
+
+🔑 *Secret:* \`${newSecret}\`
+
+Atau scan QR Code di bawah ini:
+[Klik link ini untuk melihat QR Code](${qrUrl})
+
+*Konfirmasi:* Silakan masukkan kode 6-digit OTP dari Authenticator Anda untuk mengaktifkan 2FA baru ini.
+_(Ketik /batal untuk membatalkan)_`;
+
+    bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }).catch(() => {});
+}
+
+function handle2faSetupConfirm(chatId, secret, otpCode) {
+    if (!verifyTOTP(secret, otpCode)) {
+        bot.sendMessage(chatId, '❌ Kode OTP salah. Silakan coba lagi atau ketik /batal untuk membatalkan:').catch(() => {});
+        return;
+    }
+
+    pending2faSetup.delete(chatId);
+    
+    const encryptedSecret = encryptValue(secret);
+    if (!encryptedSecret) {
+        bot.sendMessage(chatId, '❌ Gagal mengenkripsi 2FA Secret. Aksi dibatalkan.').catch(() => {});
+        sendEnvMenu(chatId);
+        return;
+    }
+
+    const ok = updateEnvField('SETUP_2FA_SECRET_ENCRYPTED', encryptedSecret);
+    if (ok) {
+        bot.sendMessage(chatId, '✅ *Setup 2FA* berhasil diperbarui dan aktif!').catch(() => {});
+    } else {
+        bot.sendMessage(chatId, '❌ Gagal menyimpan 2FA Secret baru ke file .env.').catch(() => {});
+    }
+    
+    setTimeout(() => sendEnvMenu(chatId), 1000);
+}
+
+function handleStartupOtpInput(chatId, otpCode) {
+    if (!pendingOtpRequest) return;
+    
+    // Dapatkan secret 2FA
+    const approvedHash = integrityGuard.getApprovedHash() || '';
+    const envContent = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+    const setup2FAEncrypted = readEnvField(envContent, 'SETUP_2FA_SECRET_ENCRYPTED');
+
+    let secret = null;
+    if (setup2FAEncrypted) {
+        secret = decryptValue(setup2FAEncrypted);
+    }
+
+    if (secret) {
+        if (verifyTOTP(secret, otpCode)) {
+            bot.sendMessage(chatId, '✅ *OTP Terverifikasi!* Startup Bot Utama disetujui.', { parse_mode: 'Markdown' }).catch(() => {});
+            
+            const responseObj = pendingOtpRequest.res;
+            clearTimeout(pendingOtpRequest.timeout);
+            pendingOtpRequest = null;
+
+            responseObj.writeHead(200);
+            responseObj.end(JSON.stringify({ verified: true }));
+        } else {
+            bot.sendMessage(chatId, '❌ *OTP Salah.* Silakan coba lagi.').catch(() => {});
+        }
+    } else {
+        bot.sendMessage(chatId, '⚠️ 2FA belum dikonfigurasi di file .env Anda.').catch(() => {});
+        
+        const responseObj = pendingOtpRequest.res;
+        clearTimeout(pendingOtpRequest.timeout);
+        pendingOtpRequest = null;
+
+        responseObj.writeHead(200);
+        responseObj.end(JSON.stringify({ verified: false, reason: '2fa_not_configured' }));
+    }
+}
+
+// ==========================================================
 // == FUNGSI MENU ==
 // ==========================================================
 
@@ -383,7 +775,8 @@ function sendMainMenu(chatId, text = 'Pilih bot yang ingin Anda kontrol:') {
                     { text: '📊 Cek Status Bot', callback_data: 'status_all' },
                     { text: '🖥️ Cek Status VPS', callback_data: 'status_vps' }
                 ],
-                [{ text: `👥 Kelola User (${totalUsers} user, ${blockedUsers} blokir)`, callback_data: 'user_menu' }]
+                [{ text: `👥 Kelola User (${totalUsers} user, ${blockedUsers} blokir)`, callback_data: 'user_menu' }],
+                [{ text: `⚙️ Pengaturan .env`, callback_data: 'env_menu' }]
             ]
         }
     };
@@ -452,6 +845,15 @@ bot.on('callback_query', async (callbackQuery) => {
     switch (action) {
         case 'menu_main':
             sendMainMenu(chatId);
+            break;
+        case 'env_menu':
+            sendEnvMenu(chatId);
+            break;
+        case 'env_edit':
+            startEnvEditFlow(chatId, botId);
+            break;
+        case 'env_reset_2fa':
+            start2faResetFlow(chatId);
             break;
         case 'menu_bot':
             sendBotMenu(chatId, botId);
@@ -940,6 +1342,40 @@ bot.on('message', (msg) => {
     if (msg.chat.id !== ADMIN_CHAT_ID) return;
     if (!msg.text) return;
 
+    const trimmedText = msg.text.trim();
+
+    // Handle input /batal
+    if (trimmedText === '/batal') {
+        if (pendingEnvEdit.has(msg.chat.id) || pending2faSetup.has(msg.chat.id) || pendingExpiry.has(msg.chat.id)) {
+            pendingEnvEdit.delete(msg.chat.id);
+            pending2faSetup.delete(msg.chat.id);
+            pendingExpiry.delete(msg.chat.id);
+            bot.sendMessage(msg.chat.id, '❌ Aksi dibatalkan.').catch(() => {});
+            sendMainMenu(msg.chat.id);
+            return;
+        }
+    }
+
+    // Handle input pengeditan variabel .env
+    if (pendingEnvEdit.has(msg.chat.id)) {
+        const editData = pendingEnvEdit.get(msg.chat.id);
+        handleEnvEditInput(msg.chat.id, editData.field, trimmedText);
+        return;
+    }
+
+    // Handle input konfirmasi 2FA setup baru
+    if (pending2faSetup.has(msg.chat.id)) {
+        const setupData = pending2faSetup.get(msg.chat.id);
+        handle2faSetupConfirm(msg.chat.id, setupData.secret, trimmedText);
+        return;
+    }
+
+    // Handle input OTP untuk verifikasi startup bot utama
+    if (pendingOtpRequest && /^\d{6}$/.test(trimmedText)) {
+        handleStartupOtpInput(msg.chat.id, trimmedText);
+        return;
+    }
+
     // Handle input jumlah hari masa aktif (manual ketik)
     if (pendingExpiry.has(msg.chat.id)) {
         const days = parseInt(msg.text.trim());
@@ -1004,6 +1440,72 @@ http.createServer((req, res) => {
         );
         res.writeHead(200);
         res.end(JSON.stringify({ isNew, user }));
+
+    } else if (action === '/request-otp-verification') {
+        if (pendingOtpRequest) {
+            try {
+                pendingOtpRequest.res.writeHead(200);
+                pendingOtpRequest.res.end(JSON.stringify({ verified: false, reason: 'superseded' }));
+                clearTimeout(pendingOtpRequest.timeout);
+            } catch (err) {}
+        }
+
+        // Baca body POST untuk mendapatkan changeReason
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+            let changeReason = 'file_modified';
+            try {
+                const parsed = JSON.parse(body);
+                if (parsed.changeReason) changeReason = parsed.changeReason;
+            } catch (e) {}
+
+            const timeout = setTimeout(() => {
+                if (pendingOtpRequest && pendingOtpRequest.res === res) {
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ verified: false, reason: 'timeout' }));
+                    bot.sendMessage(ADMIN_CHAT_ID, '⏰ *Verifikasi OTP Timeout.*\nStartup Bot Utama dibatalkan karena tidak ada respon dalam 60 detik.', { parse_mode: 'Markdown' }).catch(() => {});
+                    pendingOtpRequest = null;
+                }
+            }, 60000);
+
+            pendingOtpRequest = { res, timeout };
+
+            // Buat pesan yang sesuai berdasarkan alasan perubahan
+            let msgText;
+            if (changeReason === 'config_changed') {
+                msgText = `⚙️ *VERIFIKASI PERUBAHAN KONFIGURASI*
+
+Bot Utama (\`main.js\`) mendeteksi bahwa file konfigurasi (\`.env\`) telah diperbarui dan membutuhkan konfirmasi Anda.
+
+*Kemungkinan penyebab:*
+• Anda baru saja mengubah konfigurasi lewat menu ⚙️ Pengaturan .env
+• Anda baru saja menjalankan \`node setup.js\`
+
+Masukkan kode 6-digit OTP dari *Google Authenticator* untuk menyetujui.
+_(Abaikan jika Anda tidak melakukan perubahan)_`;
+            } else {
+                msgText = `🚨 *PERINGATAN KEAMANAN: Modifikasi File Kode Terdeteksi!*
+
+Bot Utama (\`main.js\`) mendeteksi bahwa satu atau lebih *file kode program* telah diubah sejak terakhir kali dijalankan.
+
+*Kemungkinan penyebab:*
+• Update kode program terbaru dari GitHub
+• Perubahan file secara manual di server
+
+Masukkan kode 6-digit OTP dari *Google Authenticator* untuk menyetujui perubahan dan melanjutkan startup.
+⛔ *Jika Anda tidak merasa mengubah apapun, jangan masukkan OTP dan segera periksa server Anda!*`;
+            }
+
+            bot.sendMessage(ADMIN_CHAT_ID, msgText, { parse_mode: 'Markdown' })
+                .catch(err => {
+                    console.error('Gagal mengirim pesan OTP ke admin:', err.message);
+                    res.writeHead(500);
+                    res.end(JSON.stringify({ verified: false, reason: 'telegram_send_failed' }));
+                    clearTimeout(timeout);
+                    pendingOtpRequest = null;
+                });
+        });
 
     } else {
         res.writeHead(404);

@@ -13,10 +13,11 @@ class MetaMaskRpcServer {
      *   Localhost : http://127.0.0.1:<port>
      *   VPS       : http://<IP_VPS>:<port>
      */
-    constructor(cryptoApp, port = 8545, vpsMode = false) {
+    constructor(cryptoApp, port = 8545, vpsMode = false, password = null) {
         this.cryptoApp = cryptoApp;
         this.port = port;
         this.vpsMode = vpsMode; // false = localhost, true = VPS (0.0.0.0)
+        this.password = password; // password/token keamanan
         this.server = null;
         this.isRunning = false;
         this.requestCount = 0;
@@ -58,6 +59,22 @@ class MetaMaskRpcServer {
                     res.writeHead(204);
                     res.end();
                     return;
+                }
+
+                // [v20] Validasi Password RPC jika diset
+                if (this.password) {
+                    const authHeader = req.headers['authorization'];
+                    const expectedAuth = `Bearer ${this.password}`;
+                    if (authHeader !== expectedAuth) {
+                        console.log(`[RPC Inject] ❌ Unauthorized request to port ${this.port}`);
+                        res.writeHead(401);
+                        res.end(JSON.stringify({
+                            jsonrpc: '2.0',
+                            id: null,
+                            error: { code: -32001, message: 'Unauthorized: Invalid RPC Password' }
+                        }));
+                        return;
+                    }
                 }
 
                 // FIX: Handle GET request — MetaMask kadang kirim GET untuk health check
@@ -508,7 +525,8 @@ class MetaMaskRpcServer {
             networkName: this.cryptoApp.currentRpcName,
             port: this.port,
             vpsMode: this.vpsMode,
-            modeLabel: this.vpsMode ? '🌐 VPS' : '💻 Localhost'
+            modeLabel: this.vpsMode ? '🌐 VPS' : '💻 Localhost',
+            password: this.password
         };
     }
 

@@ -168,7 +168,7 @@ class TelegramFullController {
         if (this.config.TELEGRAM_BOT_TOKEN) {
             try {
                 this.bot = new TelegramBot(this.config.TELEGRAM_BOT_TOKEN, { polling: true });
-                console.log('🤖 Telegram Bot (v19.0.0 - Generate Wallet & Backup Phrase) initialized');
+                console.log('🤖 Telegram Bot (v20.0.0 - Generate Wallet & Backup Phrase) initialized');
                 this.setupBotHandlers();
             } catch (error) {
                 console.log('❌ Error initializing Main Bot:', error.message);
@@ -1076,7 +1076,7 @@ class TelegramFullController {
 
         const ownerTag = this.isOwner(chatId) ? '\n👑 Anda login sebagai Owner.' : '\n📜 Anda login sebagai Script.';
         this.bot.sendMessage(chatId,
-            `🤖 FA STARX BOT v19.0 - MAIN MENU\n(Session: ${chatId})${ownerTag}\n\nPilih menu di bawah:`,
+            `🤖 FA STARX BOT v20.0 - MAIN MENU\n(Session: ${chatId})${ownerTag}\n\nPilih menu di bawah:`,
             menu
         );
     }
@@ -2045,6 +2045,28 @@ class TelegramFullController {
             this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
             this.userStates.delete(chatId);
         }
+    }
+
+    async processRpcInjectPassword(cryptoApp, chatId, text, userState) {
+        const input = text.trim();
+        if (input.toLowerCase() === '/cancel' || input.toLowerCase() === 'batal') {
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, '❌ Mulai RPC server dibatalkan.');
+            await this.showRpcInjectMenu(cryptoApp, chatId);
+            return;
+        }
+
+        let password = input;
+        if (input.toLowerCase() === 'skip') {
+            password = '';
+        } else if (!input) {
+            this.bot.sendMessage(chatId, '❌ Password tidak boleh kosong. Silakan masukkan password keamanan atau ketik *skip*:');
+            return;
+        }
+
+        const port = userState.port;
+        this.userStates.delete(chatId);
+        await this.startRpcInjectServer(cryptoApp, chatId, port, null, password);
     }
 
     // ===================================
@@ -3152,15 +3174,34 @@ class TelegramFullController {
         if (!cryptoApp) return;
 
         const allPorts = cryptoApp.getAllRpcPortsStatus();
+
+        // Check if any port is running in another user session
+        allPorts.forEach(p => {
+            if (!p.isRunning) {
+                for (const [otherChatId, otherCryptoApp] of this.userSessions.entries()) {
+                    if (otherChatId.toString() !== chatId.toString()) {
+                        if (otherCryptoApp.rpcServers.has(p.port) && otherCryptoApp.rpcServers.get(p.port).isRunning) {
+                            p.isUsedByOther = true;
+                            p.statusIcon = '🟡';
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
         const runningPorts = allPorts.filter(p => p.isRunning);
 
         let statusText = runningPorts.length > 0
             ? `🟢 AKTIF — ${runningPorts.map(p => `port ${p.port} (${p.modeLabel})`).join(', ')}`
             : '🔴 Tidak ada server aktif';
 
-        let portLines = allPorts.map(p =>
-            `${p.statusIcon} Port ${p.port} | ${p.modeLabel} | ${p.isPermanent ? '🔒' : '🗑️'} ${p.label}`
-        ).join('\n');
+        let portLines = allPorts.map(p => {
+            if (p.isUsedByOther) {
+                return `🟡 Port ${p.port} | ${p.modeLabel} | ${p.isPermanent ? '🔒' : '🗑️'} ${p.label} (Dipakai User Lain)`;
+            }
+            return `${p.statusIcon} Port ${p.port} | ${p.modeLabel} | ${p.isPermanent ? '🔒' : '🗑️'} ${p.label}`;
+        }).join('\n');
 
         // Build buttons: tiap port punya tombol start/stop + toggle mode
         const portButtons = allPorts.map(p => {
@@ -3169,6 +3210,11 @@ class TelegramFullController {
                 return [
                     { text: `🛑 Stop ${p.port}`, callback_data: `rpc_inject_stop_${p.port}` },
                     { text: `📋 Info ${p.port}`, callback_data: `rpc_inject_info_${p.port}` }
+                ];
+            } else if (p.isUsedByOther) {
+                return [
+                    { text: `🚫 Dipakai (${p.port})`, callback_data: `rpc_inject_usedbyother_${p.port}` },
+                    { text: `${toggleMode} (${p.port})`, callback_data: `rpc_inject_togglemode_${p.port}` }
                 ];
             } else {
                 return [
@@ -3193,9 +3239,28 @@ class TelegramFullController {
         );
     }
 
-    async startRpcInjectServer(cryptoApp, chatId, port, vpsMode = null) {
+    async startRpcInjectServer(cryptoApp, chatId, port, vpsMode = null, password = null) {
         if (!cryptoApp.wallet) {
             this.bot.sendMessage(chatId, '❌ Pilih wallet aktif dulu sebelum start RPC server.');
+            return;
+        }
+
+        // Check if another user session has this port active
+        const portNum = parseInt(port);
+        let portActiveInOtherSession = false;
+
+        for (const [otherChatId, otherCryptoApp] of this.userSessions.entries()) {
+            if (otherChatId.toString() !== chatId.toString()) {
+                if (otherCryptoApp.rpcServers.has(portNum) && otherCryptoApp.rpcServers.get(portNum).isRunning) {
+                    portActiveInOtherSession = true;
+                    break;
+                }
+            }
+        }
+
+        if (portActiveInOtherSession) {
+            this.bot.sendMessage(chatId, `❌ Gagal: Port ${port} sudah aktif digunakan oleh user Telegram lain.`);
+            await this.showRpcInjectMenu(cryptoApp, chatId);
             return;
         }
 
@@ -3203,7 +3268,7 @@ class TelegramFullController {
         const useVps = vpsMode !== null ? vpsMode : (cfg.vpsMode || false);
 
         await this.bot.sendMessage(chatId, `⏳ Memulai RPC server port ${port} (${useVps ? '🌐 VPS' : '💻 Localhost'})...`);
-        const started = await cryptoApp.startRpcServer(port, useVps);
+        const started = await cryptoApp.startRpcServer(port, useVps, password);
 
         if (started) {
             const info = cryptoApp.getRpcServerInfo(port);
@@ -3212,7 +3277,8 @@ class TelegramFullController {
                 `🔌 Mode  : ${info.modeLabel}\n` +
                 `🔗 URL   : \`${info.rpcUrl}\`\n` +
                 (info.vpsMode ? `⚠️ Ganti \`<IP_VPS>\` dengan IP publik VPS kamu!\n` : '') +
-                `⛓️ Chain : \`${info.chainId}\` (${info.chainIdHex})\n\n` +
+                `⛓️ Chain : \`${info.chainId}\` (${info.chainIdHex})\n` +
+                `🔑 Password: \`${password || '-'}\`\n\n` +
                 `📋 *Cara connect di MetaMask:*\n` +
                 `1. Settings → Networks → Add Network\n` +
                 `2. Network Name: ${info.networkName} (Bot)\n` +
@@ -3518,6 +3584,9 @@ class TelegramFullController {
             case 'awaiting_rpc_inject_addport':
                 await this.processRpcInjectAddPort(cryptoApp, chatId, text, userState);
                 break;
+            case 'awaiting_rpc_inject_password':
+                await this.processRpcInjectPassword(cryptoApp, chatId, text, userState);
+                break;
 
             // ── Transfer Bot states ──
             case 'transfer_awaiting_token_address':
@@ -3564,7 +3633,7 @@ class TelegramFullController {
 
         // Global: hentikan loading spinner di semua tombol sebelum proses apapun
         // (kecuali dapp_approval_toggle yang punya answerCallbackQuery sendiri dengan custom text)
-        if (data !== 'dapp_approval_toggle' && !data.startsWith('dapp_connect_approve_') && !data.startsWith('dapp_connect_reject_')) {
+        if (data !== 'dapp_approval_toggle' && !data.startsWith('dapp_connect_approve_') && !data.startsWith('dapp_connect_reject_') && !data.startsWith('rpc_inject_usedbyother_')) {
             this.bot.answerCallbackQuery(query.id).catch(() => {});
         }
 
@@ -4306,6 +4375,7 @@ class TelegramFullController {
             // [v20] RPC INJECT — MULTI-PORT
             // ========================
             else if (data === 'rpc_inject_menu') {
+                this.userStates.delete(chatId);
                 await this.showRpcInjectMenu(cryptoApp, chatId);
             }
             else if (data.startsWith('rpc_inject_info_')) {
@@ -4318,7 +4388,8 @@ class TelegramFullController {
                         `🔗 RPC URL : \`${info.rpcUrl}\`\n` +
                         (info.vpsMode ? `⚠️ Ganti \`<IP_VPS>\` dengan IP publik VPS kamu!\n` : '') +
                         `⛓️ Chain   : \`${info.chainId}\` (${info.chainIdHex})\n` +
-                        `🌐 Network : ${info.networkName}\n\n` +
+                        `🌐 Network : ${info.networkName}\n` +
+                        `🔑 Password: \`${info.password || '-'}\`\n\n` +
                         `MetaMask → Settings → Networks → Add Network`,
                         { parse_mode: 'Markdown' }
                     );
@@ -4335,7 +4406,21 @@ class TelegramFullController {
             }
             else if (data.startsWith('rpc_inject_start_')) {
                 const port = parseInt(data.replace('rpc_inject_start_', ''));
-                await this.startRpcInjectServer(cryptoApp, chatId, port);
+                this.userStates.set(chatId, { action: 'awaiting_rpc_inject_password', port });
+                this.bot.sendMessage(chatId,
+                    `🔑 *RPC PASSWORD REQUIRED*\n\n` +
+                    `Silakan masukkan password keamanan untuk port *${port}*:\n\n` +
+                    `👉 Ketik *skip* untuk menjalankan tanpa password keamanan.\n\n` +
+                    `_(Kirim /cancel untuk membatalkan)_`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+            else if (data.startsWith('rpc_inject_usedbyother_')) {
+                const port = parseInt(data.replace('rpc_inject_usedbyother_', ''));
+                this.bot.answerCallbackQuery(query.id, {
+                    text: `⚠️ Port ${port} sedang aktif digunakan oleh user lain!`,
+                    show_alert: true
+                }).catch(() => {});
             }
             else if (data.startsWith('rpc_inject_togglemode_')) {
                 const port = parseInt(data.replace('rpc_inject_togglemode_', ''));

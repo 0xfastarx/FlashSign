@@ -1,6 +1,6 @@
 /**
  * =============================================================================
- * == FA STARX BOT v19.0.0
+ * == FA STARX BOT v20.0.0
  * == Entry Point
  * =============================================================================
  */
@@ -42,7 +42,7 @@ async function main() {
 
         if (SECURE_CONFIG.TELEGRAM_BOT_TOKEN) {
             // Mode Telegram
-            console.log('🤖 Starting Telegram Bot (v19.0.0 - Generate Wallet & Backup Phrase)...');
+            console.log('🤖 Starting Telegram Bot (v20.0.0 - Generate Wallet & Backup Phrase)...');
             telegramController = new TelegramFullController(SECURE_CONFIG);
             console.log('✅ Telegram Bot Active!');
             console.log('📱 Fitur baru: Generate Wallet & Backup Phrase tersedia!');
