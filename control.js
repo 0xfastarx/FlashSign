@@ -8,6 +8,8 @@ const fs = require('fs');
 const path = require('path');
 const si = require('systeminformation');
 
+let server;
+
 // --- CEK FILE .env ---
 if (!fs.existsSync('.env')) {
     console.error('❌ FATAL: File .env tidak ditemukan!');
@@ -582,18 +584,43 @@ function scheduleAutoRestart(chatId) {
     
     bot.sendMessage(chatId, '🔄 *Notifikasi:* Perubahan konfigurasi terdeteksi. Bot Saklar akan otomatis restart dalam *60 detik* untuk menerapkan konfigurasi baru.', { parse_mode: 'Markdown' }).catch(() => {});
     
-    restartTimer = setTimeout(() => {
+    restartTimer = setTimeout(async () => {
         bot.sendMessage(chatId, '🔄 *Restarting...* Memulai ulang Bot Saklar sekarang.', { parse_mode: 'Markdown' })
             .catch(() => {})
-            .finally(() => {
+            .finally(async () => {
                 console.log('🔄 Melakukan restart otomatis...');
-                const spawn = require('child_process').spawn;
-                const child = spawn(process.argv[0], process.argv.slice(1), {
-                    detached: true,
-                    stdio: 'inherit'
-                });
-                child.unref();
-                process.exit(0);
+                
+                try {
+                    await bot.stopPolling();
+                    console.log('✅ Polling Telegram dihentikan.');
+                } catch (e) {
+                    console.error('Gagal menghentikan polling:', e.message);
+                }
+
+                const spawnAndExit = () => {
+                    const spawn = require('child_process').spawn;
+                    const child = spawn(process.argv[0], process.argv.slice(1), {
+                        detached: true,
+                        stdio: 'inherit'
+                    });
+                    child.unref();
+                    process.exit(0);
+                };
+
+                if (server) {
+                    server.close(() => {
+                        console.log('✅ HTTP Server ditutup, port dilepas.');
+                        spawnAndExit();
+                    });
+
+                    // Fallback exit setelah 3 detik jika ada koneksi gantung
+                    setTimeout(() => {
+                        console.log('⚠️ HTTP Server close timeout. Force exit...');
+                        spawnAndExit();
+                    }, 3000);
+                } else {
+                    spawnAndExit();
+                }
             });
     }, 60000);
 }
@@ -1444,7 +1471,7 @@ const http = require('http');
 
 const HTTP_PORT = process.env.CONTROLLER_HTTP_PORT || 3099;
 
-http.createServer((req, res) => {
+server = http.createServer((req, res) => {
     res.setHeader('Content-Type', 'application/json');
 
     const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
@@ -1538,7 +1565,9 @@ Masukkan kode 6-digit OTP dari *Google Authenticator* untuk menyetujui perubahan
         res.writeHead(404);
         res.end(JSON.stringify({ error: 'Not found' }));
     }
-}).listen(HTTP_PORT, '127.0.0.1', () => {
+});
+
+server.listen(HTTP_PORT, '127.0.0.1', () => {
     console.log(`🌐 Controller HTTP server berjalan di http://127.0.0.1:${HTTP_PORT}`);
 });
 
