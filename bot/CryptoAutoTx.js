@@ -24,7 +24,9 @@ class CryptoAutoTx {
             reset: '\x1b[0m'
         };
 
-        this.dataDir = path.join(__dirname, '../data');
+        const isPkg = typeof process.pkg !== 'undefined';
+        const projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
+        this.dataDir = path.join(projectRoot, 'data');
         this.ensureDataDirectory();
 
         this.wallet = null;

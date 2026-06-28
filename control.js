@@ -1,23 +1,39 @@
 // controller.js (v3.7 - Full Fix)
 
+const path = require('path');
+const fs = require('fs');
+
+// --- ENTRY POINT BYPASS UNTUK BINARY PKG ---
+if (process.argv.includes('--run-bot-utama')) {
+    require('./main.js');
+    return;
+}
+if (process.argv.includes('--run-bot-auto')) {
+    process.chdir(path.join(__dirname, 'auto'));
+    require('./main.js');
+    return;
+}
+
 const TelegramBot = require('node-telegram-bot-api');
 const { spawn } = require('child_process');
 const dotenv = require('dotenv');
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
 const si = require('systeminformation');
+
+const isPkg = typeof process.pkg !== 'undefined';
+const projectRoot = isPkg ? path.dirname(process.execPath) : __dirname;
 
 let server;
 
 // --- CEK FILE .env ---
-if (!fs.existsSync('.env')) {
-    console.error('❌ FATAL: File .env tidak ditemukan!');
+const envPath = path.join(projectRoot, 'security', '.env');
+if (!fs.existsSync(envPath)) {
+    console.error('❌ FATAL: File .env tidak ditemukan di folder security/!');
     console.error('Harap jalankan "node setup.js" terlebih dahulu.');
     process.exit(1);
 }
 
-dotenv.config();
+dotenv.config({ path: envPath });
 console.log('ℹ️ File .env dimuat oleh Controller.');
 
 const integrityGuard = require('./core/integrityGuard');
@@ -143,7 +159,7 @@ function readEnvField(envContent, fieldName) {
 }
 
 function updateEnvField(key, value) {
-    const envPath = path.join(__dirname, '.env');
+    const envPath = path.join(projectRoot, 'security', '.env');
     if (!fs.existsSync(envPath)) return false;
     try {
         let content = fs.readFileSync(envPath, 'utf8');
@@ -170,7 +186,7 @@ function updateEnvField(key, value) {
 }
 
 function getEnvFieldPreview(fieldName) {
-    const envPath = path.join(__dirname, '.env');
+    const envPath = path.join(projectRoot, 'security', '.env');
     if (!fs.existsSync(envPath)) return 'Tidak ditemukan';
     try {
         const content = fs.readFileSync(envPath, 'utf8');
@@ -287,15 +303,15 @@ try {
 const botConfigs = {
     'utama': {
         name: 'Bot Utama',
-        command: 'node',
-        args: ['main.js'],
-        cwd: __dirname
+        command: isPkg ? process.execPath : 'node',
+        args: isPkg ? ['--run-bot-utama'] : ['main.js'],
+        cwd: projectRoot
     },
     'auto': {
         name: 'Bot Kedua',
-        command: 'node',
-        args: ['main.js'],
-        cwd: path.join(__dirname, 'auto')
+        command: isPkg ? process.execPath : 'node',
+        args: isPkg ? ['--run-bot-auto'] : ['main.js'],
+        cwd: path.join(projectRoot, 'auto')
     }
 };
 
@@ -314,11 +330,11 @@ const bot = new TelegramBot(TOKEN_CONTROLLER, { polling: true });
 // == Format: { chatId: { username, firstName, joinedAt, expiredAt, status, note } }
 // ==========================================================
 
-const USERS_FILE = path.join(__dirname, 'data', 'users.json');
+const USERS_FILE = path.join(projectRoot, 'data', 'users.json');
 
 // Pastikan folder data ada
-if (!fs.existsSync(path.join(__dirname, 'data'))) {
-    fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
+if (!fs.existsSync(path.join(projectRoot, 'data'))) {
+    fs.mkdirSync(path.join(projectRoot, 'data'), { recursive: true });
 }
 
 class UserManager {
@@ -604,7 +620,7 @@ function scheduleAutoRestart(chatId) {
                     // Hapus semua key dari process.env yang ada di file .env 
                     // agar dotenv pada proses baru membaca ulang nilai terbaru dari file disk.
                     try {
-                        const envPath = path.join(__dirname, '.env');
+                        const envPath = path.join(projectRoot, 'security', '.env');
                         if (fs.existsSync(envPath)) {
                             const envContent = fs.readFileSync(envPath, 'utf8');
                             const lines = envContent.split(/\r?\n/);
@@ -801,7 +817,7 @@ function handleStartupOtpInput(chatId, otpCode) {
     
     // Dapatkan secret 2FA
     const approvedHash = integrityGuard.getApprovedHash() || '';
-    const envContent = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
+    const envContent = fs.readFileSync(path.join(projectRoot, 'security', '.env'), 'utf8');
     const setup2FAEncrypted = readEnvField(envContent, 'SETUP_2FA_SECRET_ENCRYPTED');
 
     let secret = null;

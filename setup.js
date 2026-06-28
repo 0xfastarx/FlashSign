@@ -102,7 +102,7 @@ function readEnvField(envContent, fieldName) {
 }
 
 function getApprovedHash() {
-    const lockPath = path.join(__dirname, '.integrity.lock');
+    const lockPath = path.join(__dirname, 'security', '.integrity.lock');
     if (!fs.existsSync(lockPath)) return '';
     try {
         const data = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
@@ -321,7 +321,9 @@ async function main() {
     console.log('╚══════════════════════════════════════════════════════╝');
     console.log(RESET + '');
 
-    const envPath = path.join(__dirname, '.env');
+    const envPath = path.join(__dirname, 'security', '.env');
+    const secDir = path.join(__dirname, 'security');
+    if (!fs.existsSync(secDir)) fs.mkdirSync(secDir, { recursive: true });
 
     // ── KONDISI 1: Tidak ada .env ──────────────────────────────────
     if (!fs.existsSync(envPath)) {

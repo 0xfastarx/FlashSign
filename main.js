@@ -6,9 +6,15 @@
  */
 'use strict';
 
-// Load .env PERTAMA sebelum apapun
+const path = require('path');
+const fs = require('fs');
 const dotenv = require('dotenv');
-dotenv.config({ override: true });
+
+const isPkg = typeof process.pkg !== 'undefined';
+const projectRoot = isPkg ? path.dirname(process.execPath) : __dirname;
+const envPath = path.join(projectRoot, 'security', '.env');
+
+dotenv.config({ path: envPath, override: true });
 
 // Global safety net — mencegah bot mati total akibat error tak terduga
 process.on('unhandledRejection', (reason, promise) => {
@@ -35,7 +41,7 @@ async function main() {
         await integrityGuard.verify();
         
         // Reload .env untuk memperbarui nilai process.env setelah re-enkripsi selesai
-        dotenv.config({ override: true });
+        dotenv.config({ path: envPath, override: true });
 
         await ui.showAnimatedBanner(1, 0);
         const SECURE_CONFIG = loadConfiguration();

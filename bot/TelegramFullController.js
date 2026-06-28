@@ -2,6 +2,8 @@
 const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
+const isPkg = typeof process.pkg !== 'undefined';
+const projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
 const crypto = require('crypto');
 const https = require('https');
 const TelegramBot = require('node-telegram-bot-api');
@@ -123,9 +125,9 @@ class TelegramFullController {
     // ─── UPDATE PASSWORD DI .env (OWNER ONLY) ────────────────────────────────
     _updatePasswordInEnv(type, newPassword) {
         try {
-            const envPath = path.join(__dirname, '../.env');
+            const envPath = path.join(projectRoot, 'security', '.env');
             if (!fs.existsSync(envPath)) {
-                return { ok: false, msg: 'File .env tidak ditemukan.' };
+                return { ok: false, msg: 'File .env tidak ditemukan di folder security/.' };
             }
             
             // Menggunakan hash live aktif proyek agar enkripsi sinkron dengan loadConfiguration
@@ -369,7 +371,7 @@ class TelegramFullController {
     _get2FA(chatId) {
         if (!this._twoFAMap) this._twoFAMap = new Map();
         if (!this._twoFAMap.has(chatId)) {
-            const dataDir = path.join(__dirname, 'data', `user_${chatId}`);
+            const dataDir = path.join(projectRoot, 'data', `user_${chatId}`);
             this._twoFAMap.set(chatId, new TwoFactorAuth(dataDir));
         }
         return this._twoFAMap.get(chatId);
@@ -384,7 +386,7 @@ class TelegramFullController {
     _getBackupGuard(chatId) {
         if (!this._backupGuardMap) this._backupGuardMap = new Map();
         if (!this._backupGuardMap.has(chatId)) {
-            const dataDir = path.join(__dirname, 'data', `user_${chatId}`);
+            const dataDir = path.join(projectRoot, 'data', `user_${chatId}`);
             this._backupGuardMap.set(chatId, new BackupPasswordGuard(dataDir));
         }
         return this._backupGuardMap.get(chatId);
@@ -1076,7 +1078,7 @@ class TelegramFullController {
     // ===================================
 
     getExplorerApiKeys(chatId) {
-        const filePath = path.join(__dirname, `../data/${chatId}_explorer_keys.enc`);
+        const filePath = path.join(projectRoot, `data/${chatId}_explorer_keys.enc`);
         if (!fs.existsSync(filePath)) {
             return {};
         }
@@ -1091,7 +1093,7 @@ class TelegramFullController {
     }
 
     saveExplorerApiKeys(chatId, keys) {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
@@ -1108,7 +1110,7 @@ class TelegramFullController {
     }
 
     getTrackedWallets(chatId) {
-        const filePath = path.join(__dirname, `../data/${chatId}_tracked_wallets.json`);
+        const filePath = path.join(projectRoot, `data/${chatId}_tracked_wallets.json`);
         if (!fs.existsSync(filePath)) return [];
         try {
             return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1119,7 +1121,7 @@ class TelegramFullController {
     }
 
     saveTrackedWallets(chatId, wallets) {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const filePath = path.join(dir, `${chatId}_tracked_wallets.json`);
         try {
@@ -1132,7 +1134,7 @@ class TelegramFullController {
     }
 
     getTrackerHistory(chatId) {
-        const filePath = path.join(__dirname, `../data/${chatId}_tracker_history.json`);
+        const filePath = path.join(projectRoot, `data/${chatId}_tracker_history.json`);
         if (!fs.existsSync(filePath)) return [];
         try {
             return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1143,7 +1145,7 @@ class TelegramFullController {
     }
 
     saveTrackerHistory(chatId, history) {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const filePath = path.join(dir, `${chatId}_tracker_history.json`);
         try {
@@ -1156,7 +1158,7 @@ class TelegramFullController {
     }
 
     getTrackerState(chatId) {
-        const filePath = path.join(__dirname, `../data/${chatId}_tracker_state.json`);
+        const filePath = path.join(projectRoot, `data/${chatId}_tracker_state.json`);
         if (!fs.existsSync(filePath)) return { active: false, lastScannedBlocks: {}, scannedTxHashes: [] };
         try {
             return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1167,7 +1169,7 @@ class TelegramFullController {
     }
 
     saveTrackerState(chatId, state) {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
         const filePath = path.join(dir, `${chatId}_tracker_state.json`);
         try {
@@ -1224,7 +1226,7 @@ class TelegramFullController {
     }
 
     getManualRpcs(chatId) {
-        const filePath = path.join(__dirname, `../data/${chatId}_manual_rpcs.json`);
+        const filePath = path.join(projectRoot, `data/${chatId}_manual_rpcs.json`);
         if (fs.existsSync(filePath)) {
             try {
                 return JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1236,7 +1238,7 @@ class TelegramFullController {
     }
 
     saveManualRpcs(chatId, rpcs) {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
@@ -1245,7 +1247,7 @@ class TelegramFullController {
     }
 
     getManualTokens(chatId, chainId) {
-        const filePath = path.join(__dirname, `../data/${chatId}_manual_tokens.json`);
+        const filePath = path.join(projectRoot, `data/${chatId}_manual_tokens.json`);
         if (fs.existsSync(filePath)) {
             try {
                 const allTokens = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -1258,7 +1260,7 @@ class TelegramFullController {
     }
 
     saveManualToken(chatId, chainId, tokenInfo) {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir, { recursive: true });
         }
@@ -6469,7 +6471,7 @@ class TelegramFullController {
         const statusMsg = await this.bot.sendMessage(chatId, '⏳ *Sedang memproses dan mengenkripsi data backup Anda...*', { parse_mode: 'Markdown' });
 
         try {
-            const dataDir = path.join(__dirname, '../data');
+            const dataDir = path.join(projectRoot, 'data');
             const backupBuffer = backupHelper.createBackup(chatId, password, dataDir);
 
             // Kirim file backup ke Telegram
@@ -6507,7 +6509,7 @@ class TelegramFullController {
         const statusMsg = await this.bot.sendMessage(chatId, '⏳ *Sedang mendekripsi dan memulihkan data Anda...*', { parse_mode: 'Markdown' });
 
         try {
-            const dataDir = path.join(__dirname, '../data');
+            const dataDir = path.join(projectRoot, 'data');
             const backupData = userState.backupData;
 
             // Panggil restoreBackup
@@ -6846,7 +6848,7 @@ class TelegramFullController {
     }
 
     resumeTrackerPollings() {
-        const dir = path.join(__dirname, '../data');
+        const dir = path.join(projectRoot, 'data');
         if (!fs.existsSync(dir)) return;
         try {
             const files = fs.readdirSync(dir);

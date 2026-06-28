@@ -4,9 +4,11 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DATA_DIR = path.join(__dirname, '../data');
+const isPkg = typeof process.pkg !== 'undefined';
+const projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
+const DATA_DIR = path.join(projectRoot, 'data');
 const FILE_PATH = path.join(DATA_DIR, '.morse-messages-secure.json');
-const OLD_FILE_PATH = path.join(__dirname, '../.morse-messages-secure.json');
+const OLD_FILE_PATH = path.join(projectRoot, '.morse-messages-secure.json');
 
 // Auto-migrasi: pindahkan file lama ke folder data/ jika ada
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });

@@ -7,6 +7,9 @@ const ModernUI = require('../core/ModernUI');
 const InputHandler = require('../core/InputHandler');
 const TwoFactorAuth = require('./TwoFactorAuth');
 
+const isPkg = typeof process.pkg !== 'undefined';
+const projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
+
 class GitHubPasswordSync {
     constructor(rl, adminPassword, scriptPassword, mainUrl, backupUrl, salt) {
         this.ui = new ModernUI();
@@ -110,10 +113,12 @@ class GitHubPasswordSync {
 
     async createSecurityFiles() {
         console.log('📁 Creating security files...');
+        const secDir = path.join(projectRoot, 'security');
+        if (!fs.existsSync(secDir)) fs.mkdirSync(secDir, { recursive: true });
         let createdCount = 0;
         const timestamp = new Date().toISOString();
         for (const file of this.securityFiles) {
-            const filePath = path.join(__dirname, '../' + file);
+            const filePath = path.join(projectRoot, 'security', file);
             if (!fs.existsSync(filePath)) {
                 try {
                     let fileData = {};
@@ -146,7 +151,7 @@ class GitHubPasswordSync {
         let adminFound = false, scriptFound = false;
         
         for (const file of adminFiles) {
-            const filePath = path.join(__dirname, '../' + file);
+            const filePath = path.join(projectRoot, 'security', file);
             if (fs.existsSync(filePath)) {
                 try {
                     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -165,7 +170,7 @@ class GitHubPasswordSync {
         if (!adminFound) console.log('❌ CRITICAL: Could not load admin password from any source file.');
         
         for (const file of scriptFiles) {
-            const filePath = path.join(__dirname, '../' + file);
+            const filePath = path.join(projectRoot, 'security', file);
             if (fs.existsSync(filePath)) {
                 try {
                     const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
@@ -307,7 +312,7 @@ class GitHubPasswordSync {
         const adminFiles = ['.admin-password-secure', '.secure-backup-marker', '.system-integrity-check'];
         for (const file of this.securityFiles) {
             if (adminFiles.includes(file)) continue; 
-            const filePath = path.join(__dirname, '../' + file);
+            const filePath = path.join(projectRoot, 'security', file);
             try {
                 let fileData = {
                     password: newPassword, timestamp: timestamp, type: 'SECURITY_FILE',
@@ -369,7 +374,7 @@ class GitHubPasswordSync {
         // Jika 2FA aktif: tampilkan pilihan metode login
         if (status.active) {
             const graceNote = status.inGrace
-                ? (() => { const tfa=new TwoFactorAuth(this.dataDir||path.join(__dirname,'data')); return status.graceDetail ? `Grace period aktif: ${tfa._fmtRemaining(status.graceDetail)}` : `Grace period aktif: ${status.graceDaysLeft} hari tersisa`; })()
+                ? (() => { const tfa=new TwoFactorAuth(this.dataDir||path.join(projectRoot, 'data')); return status.graceDetail ? `Grace period aktif: ${tfa._fmtRemaining(status.graceDetail)}` : `Grace period aktif: ${status.graceDaysLeft} hari tersisa`; })()
                 : '2FA Aktif';
 
             this.ui.createBox(`PILIH METODE LOGIN — ${labelLevel}`, [
@@ -446,7 +451,7 @@ class GitHubPasswordSync {
         const secret = tfa.getSecret(level, salt);
 
         const graceNote = status.inGrace
-            ? (() => { const tfa=new TwoFactorAuth(this.dataDir||path.join(__dirname,'data')); return status.graceDetail ? `Grace period: ${tfa._fmtRemaining(status.graceDetail)}` : `Grace period: ${status.graceDaysLeft} hari tersisa`; })()
+            ? (() => { const tfa=new TwoFactorAuth(this.dataDir||path.join(projectRoot, 'data')); return status.graceDetail ? `Grace period: ${tfa._fmtRemaining(status.graceDetail)}` : `Grace period: ${status.graceDaysLeft} hari tersisa`; })()
             : '2FA Normal';
 
         this.ui.createBox(`${labelLevel} — MASUK DENGAN OTP`, [
@@ -513,7 +518,7 @@ class GitHubPasswordSync {
 
     _get2FA() {
         if (!this._twoFA) {
-            const dataDir = path.join(__dirname, '..', 'data');
+            const dataDir = path.join(projectRoot, 'data');
             this._twoFA = new TwoFactorAuth(dataDir);
         }
         return this._twoFA;
@@ -621,7 +626,7 @@ class GitHubPasswordSync {
     checkFileStatus() {
         let existing = 0, missing = 0;
         for (const file of this.securityFiles) {
-            if (fs.existsSync(path.join(__dirname, '../' + file))) existing++;
+            if (fs.existsSync(path.join(projectRoot, 'security', file))) existing++;
             else missing++;
         }
         return { existing, missing };

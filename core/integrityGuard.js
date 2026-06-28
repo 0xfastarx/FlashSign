@@ -21,24 +21,30 @@ const PROTECTED_FILES = [
     'setup.js',
     'package.json',
     'package-lock.json',
-    '.security-system-marker',
-    '.secure-backup-marker',
-    '.fastarx-ultra-secure',
-    '.permanent-security',
-    '.admin-password-secure',
-    '.github-validation-lock',
-    '.dual-backup-evidence'
+    'security/.security-system-marker',
+    'security/.secure-backup-marker',
+    'security/.fastarx-ultra-secure',
+    'security/.permanent-security',
+    'security/.admin-password-secure',
+    'security/.github-validation-lock',
+    'security/.dual-backup-evidence'
 ];
 
 class IntegrityGuard {
     constructor() {
-        this.projectRoot = path.join(__dirname, '..');
-        this.lockFilePath = path.join(this.projectRoot, '.integrity.lock');
-        this.backupFilePath = path.join(this.projectRoot, '.system-integrity-check');
-        this.envPath = path.join(this.projectRoot, '.env');
+        const isPkg = typeof process.pkg !== 'undefined';
+        this.projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
+        this.securityDir = path.join(this.projectRoot, 'security');
+        if (!fs.existsSync(this.securityDir)) fs.mkdirSync(this.securityDir, { recursive: true });
+        this.lockFilePath = path.join(this.securityDir, '.integrity.lock');
+        this.backupFilePath = path.join(this.securityDir, '.system-integrity-check');
+        this.envPath = path.join(this.securityDir, '.env');
     }
 
     calculateProjectHash() {
+        if (typeof process.pkg !== 'undefined') {
+            return this.getApprovedHash() || '';
+        }
         const fileHashes = [];
 
         for (const dirName of PROTECTED_DIRS) {
@@ -135,7 +141,7 @@ class IntegrityGuard {
     }
 
     _loadAdminPasswordFromMarker(approvedHash) {
-        const adminSecureFile = path.join(this.projectRoot, '.admin-password-secure');
+        const adminSecureFile = path.join(this.securityDir, '.admin-password-secure');
         if (!fs.existsSync(adminSecureFile)) return null;
 
         try {

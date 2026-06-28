@@ -9,7 +9,9 @@ const ui = new ModernUI();
 // ===== ENHANCED SECURE CONFIG MANAGER =====
 class EnhancedSecureConfigManager {
     constructor() {
-        this.configFile = path.join(__dirname, '..', 'multi-account-bot-config.enc');
+        const isPkg = typeof process.pkg !== 'undefined';
+        const projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
+        this.configFile = path.join(projectRoot, 'multi-account-bot-config.enc');
     }
 
     saveMultipleAccounts(accounts, password) {
