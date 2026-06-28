@@ -4,11 +4,11 @@ const path = require('path');
 const fs = require('fs');
 
 // --- ENTRY POINT BYPASS UNTUK BINARY PKG ---
-if (process.argv.includes('--run-bot-utama')) {
+if (process.argv.includes('--run-bot-utama') || process.env.RUN_BOT_MODE === 'utama') {
     require('./main.js');
     return;
 }
-if (process.argv.includes('--run-bot-auto')) {
+if (process.argv.includes('--run-bot-auto') || process.env.RUN_BOT_MODE === 'auto') {
     process.chdir(path.join(__dirname, 'auto'));
     require('./main.js');
     return;
@@ -1105,13 +1105,20 @@ function startBotProcess(chatId, botId) {
         return;
     }
 
-    console.log(`Mencoba menjalankan: "${config.command} ${config.args.join(' ')}"...`);
+    const spawnEnv = { ...process.env };
+    if (isPkg) {
+        if (botId === 'utama') spawnEnv.RUN_BOT_MODE = 'utama';
+        if (botId === 'auto') spawnEnv.RUN_BOT_MODE = 'auto';
+    }
+
+    console.log(`Mencoba menjalankan: "${config.command}${isPkg ? '' : ' ' + config.args.join(' ')}"...`);
     console.log(`Working Directory: ${config.cwd}`);
     bot.sendMessage(chatId, `🔄 Menjalankan ${config.name}...`).catch(() => { });
 
-    const botProcess = spawn(config.command, config.args, {
+    const botProcess = spawn(config.command, isPkg ? [] : config.args, {
         stdio: ['ignore', 'inherit', 'inherit'],
-        cwd: config.cwd
+        cwd: config.cwd,
+        env: spawnEnv
     });
 
     runningBots[botId] = botProcess;
