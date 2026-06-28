@@ -8,7 +8,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const GitHubPasswordSync = require('../auth/GitHubPasswordSync');
 const CryptoAutoTx = require('./CryptoAutoTx');
 const TwoFactorAuth = require('../auth/TwoFactorAuth');
-const { NETWORK_CONFIG } = require('../utils/constants');
+const BackupPasswordGuard = require('../auth/BackupPasswordGuard');
+const { NETWORK_CONFIG, MANUAL_NETWORKS, ERC20_ABI, TRACKER_NETWORKS } = require('../utils/constants');
 const { enhancedConfigManager } = require('../utils/secureConfig');
 const EthTransfer = require('../transfer/EthTransfer');
 const TokenTransfer = require('../transfer/TokenTransfer');
@@ -69,6 +70,9 @@ class TelegramFullController {
 
         this.initBot();
         this.initSecuritySystem();
+        this.trackerIntervals = new Map();
+        // Delay a bit to let bot initialization complete
+        setTimeout(() => this.resumeTrackerPollings(), 3000);
     }
 
     initSecuritySystem() {
@@ -374,6 +378,21 @@ class TelegramFullController {
     _get2FAMasterSalt(chatId) {
         const base = process.env.SYSTEM_ID || 'FASTARX_2FA_DEFAULT_SALT';
         return `${base}_${chatId}`;
+    }
+
+    // ── Helper Sandi Backup Wallet (per chatId) ──
+    _getBackupGuard(chatId) {
+        if (!this._backupGuardMap) this._backupGuardMap = new Map();
+        if (!this._backupGuardMap.has(chatId)) {
+            const dataDir = path.join(__dirname, 'data', `user_${chatId}`);
+            this._backupGuardMap.set(chatId, new BackupPasswordGuard(dataDir));
+        }
+        return this._backupGuardMap.get(chatId);
+    }
+
+    _getBackupGuardSalt(chatId) {
+        const base = process.env.SYSTEM_ID || 'FASTARX_BACKUP_DEFAULT_SALT';
+        return `${base}_backup_${chatId}`;
     }
 
     /**
@@ -687,7 +706,9 @@ class TelegramFullController {
     showMenuLainnya(chatId) {
         const keyboard = [
             [{ text: '💸 Transfer Bot', callback_data: 'transfer_menu' }],
+            [{ text: '💸 Transfer Manual', callback_data: 'transfer_manual_menu' }],
             [{ text: '🔐 Morse Cipher Tool', callback_data: 'morse_menu' }],
+            [{ text: '📊 Tracking Bot', callback_data: 'tracker_menu' }],
             [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
         ];
 
@@ -1050,6 +1071,817 @@ class TelegramFullController {
         }
     }
 
+    // ===================================
+    // 💸 MANUAL TRANSFER FLOW (INDEPENDENT)
+    // ===================================
+
+    getExplorerApiKeys(chatId) {
+        const filePath = path.join(__dirname, `../data/${chatId}_explorer_keys.enc`);
+        if (!fs.existsSync(filePath)) {
+            return {};
+        }
+        try {
+            const raw = fs.readFileSync(filePath, 'utf8');
+            const decrypted = this._decryptData(raw, this.config.SCRIPT_PASSWORD + chatId);
+            return JSON.parse(decrypted);
+        } catch (e) {
+            console.error('Failed to decrypt explorer API keys:', e);
+            return {};
+        }
+    }
+
+    saveExplorerApiKeys(chatId, keys) {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const filePath = path.join(dir, `${chatId}_explorer_keys.enc`);
+        try {
+            const encrypted = this._encryptData(JSON.stringify(keys), this.config.SCRIPT_PASSWORD + chatId);
+            fs.writeFileSync(filePath, encrypted, 'utf8');
+            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            return true;
+        } catch (e) {
+            console.error('Failed to encrypt explorer API keys:', e);
+            return false;
+        }
+    }
+
+    getTrackedWallets(chatId) {
+        const filePath = path.join(__dirname, `../data/${chatId}_tracked_wallets.json`);
+        if (!fs.existsSync(filePath)) return [];
+        try {
+            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        } catch (e) {
+            console.error('Failed to read tracked wallets:', e);
+            return [];
+        }
+    }
+
+    saveTrackedWallets(chatId, wallets) {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, `${chatId}_tracked_wallets.json`);
+        try {
+            fs.writeFileSync(filePath, JSON.stringify(wallets, null, 2), 'utf8');
+            return true;
+        } catch (e) {
+            console.error('Failed to save tracked wallets:', e);
+            return false;
+        }
+    }
+
+    getTrackerHistory(chatId) {
+        const filePath = path.join(__dirname, `../data/${chatId}_tracker_history.json`);
+        if (!fs.existsSync(filePath)) return [];
+        try {
+            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        } catch (e) {
+            console.error('Failed to read tracker history:', e);
+            return [];
+        }
+    }
+
+    saveTrackerHistory(chatId, history) {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, `${chatId}_tracker_history.json`);
+        try {
+            fs.writeFileSync(filePath, JSON.stringify(history, null, 2), 'utf8');
+            return true;
+        } catch (e) {
+            console.error('Failed to save tracker history:', e);
+            return false;
+        }
+    }
+
+    getTrackerState(chatId) {
+        const filePath = path.join(__dirname, `../data/${chatId}_tracker_state.json`);
+        if (!fs.existsSync(filePath)) return { active: false, lastScannedBlocks: {}, scannedTxHashes: [] };
+        try {
+            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        } catch (e) {
+            console.error('Failed to read tracker state:', e);
+            return { active: false, lastScannedBlocks: {}, scannedTxHashes: [] };
+        }
+    }
+
+    saveTrackerState(chatId, state) {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const filePath = path.join(dir, `${chatId}_tracker_state.json`);
+        try {
+            fs.writeFileSync(filePath, JSON.stringify(state, null, 2), 'utf8');
+            return true;
+        } catch (e) {
+            console.error('Failed to save tracker state:', e);
+            return false;
+        }
+    }
+
+
+    _encryptData(text, password) {
+        const salt = crypto.randomBytes(16);
+        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+        let encrypted = cipher.update(text, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        const authTag = cipher.getAuthTag();
+        const result = { encrypted, iv: iv.toString('hex'), salt: salt.toString('hex'), authTag: authTag.toString('hex') };
+        return Buffer.from(JSON.stringify(result)).toString('base64');
+    }
+
+    _decryptData(encryptedData, password) {
+        const data = JSON.parse(Buffer.from(encryptedData, 'base64').toString());
+        const salt = Buffer.from(data.salt, 'hex');
+        const iv = Buffer.from(data.iv, 'hex');
+        const authTag = Buffer.from(data.authTag, 'hex');
+        const key = crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256');
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(authTag);
+        let decrypted = decipher.update(data.encrypted, 'hex', 'utf8');
+        decrypted += decipher.final('utf8');
+        return decrypted;
+    }
+
+    _httpGet(url) {
+        return new Promise((resolve, reject) => {
+            https.get(url, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    try {
+                        resolve(JSON.parse(data));
+                    } catch (e) {
+                        reject(new Error('Invalid JSON response'));
+                    }
+                });
+            }).on('error', (err) => {
+                reject(err);
+            });
+        });
+    }
+
+    getManualRpcs(chatId) {
+        const filePath = path.join(__dirname, `../data/${chatId}_manual_rpcs.json`);
+        if (fs.existsSync(filePath)) {
+            try {
+                return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            } catch (e) {
+                return {};
+            }
+        }
+        return {};
+    }
+
+    saveManualRpcs(chatId, rpcs) {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const filePath = path.join(dir, `${chatId}_manual_rpcs.json`);
+        fs.writeFileSync(filePath, JSON.stringify(rpcs, null, 2), 'utf8');
+    }
+
+    getManualTokens(chatId, chainId) {
+        const filePath = path.join(__dirname, `../data/${chatId}_manual_tokens.json`);
+        if (fs.existsSync(filePath)) {
+            try {
+                const allTokens = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+                return allTokens[chainId] || [];
+            } catch (e) {
+                return [];
+            }
+        }
+        return [];
+    }
+
+    saveManualToken(chatId, chainId, tokenInfo) {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        const filePath = path.join(dir, `${chatId}_manual_tokens.json`);
+        let allTokens = {};
+        if (fs.existsSync(filePath)) {
+            try {
+                allTokens = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+            } catch (e) {}
+        }
+        if (!allTokens[chainId]) {
+            allTokens[chainId] = [];
+        }
+        if (!allTokens[chainId].some(t => t.address.toLowerCase() === tokenInfo.address.toLowerCase())) {
+            allTokens[chainId].push(tokenInfo);
+        }
+        fs.writeFileSync(filePath, JSON.stringify(allTokens, null, 2), 'utf8');
+    }
+
+    async showManualTransferMenu(chatId) {
+        const keyboard = [];
+        // Default networks
+        Object.entries(MANUAL_NETWORKS).forEach(([key, net]) => {
+            keyboard.push([{ text: `🌐 ${net.name}`, callback_data: `tm_pick_net_default_${key}` }]);
+        });
+        
+        keyboard.push([{ text: '🌐 Jaringan Lain nya', callback_data: 'tm_menu_other_networks' }]);
+        keyboard.push([{ text: '🔑 Setup Explorer API Keys', callback_data: 'tm_setup_api_keys' }]);
+        keyboard.push([{ text: '🔙 Kembali', callback_data: 'menu_lainnya' }]);
+
+        this.bot.sendMessage(chatId,
+            `💸 *TRANSFER MANUAL — PILIH JARINGAN*\n\n` +
+            `Silakan pilih jaringan untuk transfer manual Anda:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    async showExplorerApiKeysMenu(chatId) {
+        const keys = this.getExplorerApiKeys(chatId);
+        
+        const mask = (val) => val ? `${val.slice(0, 6)}...${val.slice(-4)}` : '🔴 Belum diset';
+
+        const keyboard = [
+            [{ text: `Etherscan API Key: ${mask(keys.etherscan)}`, callback_data: 'tm_edit_api_etherscan' }],
+            [{ text: `Basescan API Key: ${mask(keys.basescan)}`, callback_data: 'tm_edit_api_basescan' }],
+            [{ text: `BscScan API Key: ${mask(keys.bscscan)}`, callback_data: 'tm_edit_api_bscscan' }],
+            [{ text: '🔙 Kembali', callback_data: 'transfer_manual_menu' }]
+        ];
+
+        this.bot.sendMessage(chatId,
+            `🔑 *EXPLORER API KEYS (MANUAL TRANSFER)*\n\n` +
+            `API Key ini disimpan secara terenkripsi di folder \`data/\` untuk mengambil riwayat transaksi Anda secara aman.\n\n` +
+            `Pilih salah satu tombol di bawah untuk mengatur/mengubah kunci:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    async showAssetDashboard(chatId, state) {
+        try {
+            await this.bot.sendMessage(chatId, '🔄 Menghubungkan provider & memuat riwayat transaksi...');
+            
+            const provider = new ethers.JsonRpcProvider(state.network.rpc);
+            const balance = await provider.getBalance(state.wallet.address);
+            const balanceFormatted = ethers.formatEther(balance);
+            state.balanceFormatted = balanceFormatted;
+
+            // Ambil API keys
+            const apiKeys = this.getExplorerApiKeys(chatId);
+            
+            const chainId = state.network.chainId;
+            let url = '';
+
+            if (chainId === 11155111) {
+                const key = apiKeys.etherscan;
+                if (key) {
+                    url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=account&action=${state.asset.type === 'native' ? 'txlist' : 'tokentx'}&address=${state.wallet.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=desc&apikey=${key}`;
+                    if (state.asset.type !== 'native') {
+                        url += `&contractaddress=${state.asset.address}`;
+                    }
+                } else {
+                    // Blockscout (Free, No Key)
+                    url = `https://eth-sepolia.blockscout.com/api?module=account&action=${state.asset.type === 'native' ? 'txlist' : 'tokentx'}&address=${state.wallet.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=desc`;
+                    if (state.asset.type !== 'native') {
+                        url += `&contractaddress=${state.asset.address}`;
+                    }
+                }
+            } else if (chainId === 84532) {
+                const key = apiKeys.basescan;
+                if (key) {
+                    url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=account&action=${state.asset.type === 'native' ? 'txlist' : 'tokentx'}&address=${state.wallet.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=desc&apikey=${key}`;
+                    if (state.asset.type !== 'native') {
+                        url += `&contractaddress=${state.asset.address}`;
+                    }
+                } else {
+                    // Blockscout (Free, No Key)
+                    url = `https://base-sepolia.blockscout.com/api?module=account&action=${state.asset.type === 'native' ? 'txlist' : 'tokentx'}&address=${state.wallet.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=desc`;
+                    if (state.asset.type !== 'native') {
+                        url += `&contractaddress=${state.asset.address}`;
+                    }
+                }
+            } else if (chainId === 97) {
+                const key = apiKeys.bscscan || '';
+                url = `https://api.etherscan.io/v2/api?chainid=${chainId}&module=account&action=${state.asset.type === 'native' ? 'txlist' : 'tokentx'}&address=${state.wallet.address}&startblock=0&endblock=99999999&page=1&offset=10&sort=desc`;
+                if (state.asset.type !== 'native') {
+                    url += `&contractaddress=${state.asset.address}`;
+                }
+                if (key) {
+                    url += `&apikey=${key}`;
+                }
+            }
+
+            let txs = [];
+            let errorMsg = null;
+
+            if (url) {
+                try {
+                    const res = await this._httpGet(url);
+                    if (res && res.status === '1' && Array.isArray(res.result)) {
+                        txs = res.result.slice(0, 4);
+                    } else if (res && (res.message === 'No transactions found' || res.message === 'No transfers found' || res.message === 'No token transfers found' || (Array.isArray(res.result) && res.result.length === 0))) {
+                        txs = [];
+                    } else if (res) {
+                        const errMsg = typeof res.result === 'string' ? res.result : (res.message || 'Error tidak diketahui');
+                        errorMsg = `Gagal memuat riwayat: ${errMsg}`;
+                    }
+                } catch (e) {
+                    errorMsg = `Gagal memuat riwayat: rate limit atau network error.`;
+                }
+            } else {
+                errorMsg = 'Jaringan ini tidak mendukung API Explorer bawaan.';
+            }
+
+            // Simpan transaksi di state
+            state.latestTxs = txs;
+            this.userStates.set(chatId, state);
+
+            const keyboard = [
+                [{ text: '📤 Kirim / Send', callback_data: 'tm_start_send_flow' }]
+            ];
+
+            // Render tombol riwayat
+            if (txs.length > 0) {
+                txs.forEach((tx, idx) => {
+                    const isOutgoing = tx.from.toLowerCase() === state.wallet.address.toLowerCase();
+                    const dirSymbol = isOutgoing ? '⬆️ Kirim' : '⬇️ Terima';
+                    const targetAddr = isOutgoing ? tx.to : tx.from;
+                    const amountRaw = tx.value;
+                    const decimals = tx.tokenDecimal ? parseInt(tx.tokenDecimal) : (state.asset.decimals || 18);
+                    const amountFormatted = ethers.formatUnits(amountRaw, decimals);
+                    const symbol = tx.tokenSymbol || state.asset.symbol || 'Native';
+                    const displayAmt = parseFloat(amountFormatted).toFixed(4);
+
+                    const label = `${dirSymbol} ${displayAmt} ${symbol} ${isOutgoing ? '→' : '←'} ${targetAddr.slice(0, 6)}...${targetAddr.slice(-4)}`;
+                    keyboard.push([{ text: label, callback_data: `tm_tx_detail_${idx}` }]);
+                });
+            } else {
+                keyboard.push([{ text: errorMsg || 'ℹ️ Belum ada riwayat transaksi.', callback_data: 'tm_dummy_tx' }]);
+            }
+
+            // Lihat transaksi lainnya
+            const explorerUrl = state.network.explorer 
+                ? `${state.network.explorer}/address/${state.wallet.address}`
+                : null;
+            
+            const bottomRow = [];
+            if (explorerUrl) {
+                bottomRow.push({ text: '🔍 Lihat Transaksi Lainnya', url: explorerUrl });
+            }
+            bottomRow.push({ text: '🔙 Kembali', callback_data: 'transfer_manual_menu' });
+            keyboard.push(bottomRow);
+
+            const assetLabel = state.asset.type === 'native' ? 'Native Coin' : `${state.asset.name} (${state.asset.symbol})`;
+            let dashboardText = 
+                `📊 *DASHBOARD ASET — TRANSFER MANUAL*\n\n` +
+                `🌐 Jaringan: *${state.network.name}*\n` +
+                `🪙 Aset: *${assetLabel}*\n` +
+                `💼 Wallet: *${state.wallet.nickname || state.wallet.address}*\n` +
+                `\`${state.wallet.address}\`\n\n` +
+                `💰 Saldo: *${parseFloat(balanceFormatted).toFixed(6)} ETH/Native*\n`;
+
+            if (state.asset.type === 'token') {
+                try {
+                    const tokenContract = new ethers.Contract(state.asset.address, ERC20_ABI, provider);
+                    const tokBal = await tokenContract.balanceOf(state.wallet.address);
+                    const tokBalFormatted = ethers.formatUnits(tokBal, state.asset.decimals);
+                    dashboardText += `🪙 Saldo Token: *${parseFloat(tokBalFormatted).toFixed(6)} ${state.asset.symbol}*\n`;
+                } catch (_) {
+                    dashboardText += `🪙 Saldo Token: *Gagal memuat*\n`;
+                }
+            }
+
+            dashboardText += `\n*4 Transaksi Terakhir:*`;
+
+            this.bot.sendMessage(chatId, dashboardText, {
+                parse_mode: 'Markdown',
+                reply_markup: { inline_keyboard: keyboard }
+            });
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Gagal memuat dashboard aset: ${error.message}`);
+            await this.showManualTransferMenu(chatId);
+        }
+    }
+
+    async showTransactionDetail(chatId, state, txIndex) {
+        const tx = state.latestTxs && state.latestTxs[txIndex];
+        if (!tx) {
+            this.bot.sendMessage(chatId, '❌ Detail transaksi tidak ditemukan.');
+            await this.showAssetDashboard(chatId, state);
+            return;
+        }
+
+        const isOutgoing = tx.from.toLowerCase() === state.wallet.address.toLowerCase();
+        const typeLabel = isOutgoing ? '⬆️ KIRIM (Outgoing)' : '⬇️ TERIMA (Incoming)';
+        const amountRaw = tx.value;
+        const decimals = tx.tokenDecimal ? parseInt(tx.tokenDecimal) : (state.asset.decimals || 18);
+        const amountFormatted = ethers.formatUnits(amountRaw, decimals);
+        const symbol = tx.tokenSymbol || state.asset.symbol || 'Native';
+        
+        let gasCostFormatted = 'N/A';
+        if (tx.gasUsed && tx.gasPrice) {
+            const gasCostRaw = BigInt(tx.gasUsed) * BigInt(tx.gasPrice);
+            gasCostFormatted = ethers.formatEther(gasCostRaw);
+        }
+
+        const date = tx.timeStamp ? new Date(parseInt(tx.timeStamp) * 1000).toLocaleString('id-ID') : 'N/A';
+        const isErr = tx.isError === '1';
+
+        let detailText = 
+            `📋 *DETAIL TRANSAKSI*\n\n` +
+            `🏷️ Tipe: *${typeLabel}*\n` +
+            `✅ Status: *${isErr ? '🔴 Gagal' : '🟢 Sukses'}*\n\n` +
+            `📄 *TX Hash:* \`${tx.hash}\`\n\n` +
+            `👤 *Dari (Pengirim):*\n\`${tx.from}\`\n\n` +
+            `📥 *Ke (Penerima):*\n\`${tx.to}\`\n\n` +
+            `🪙 *Aset:* *${symbol}*\n` +
+            `🔢 *Jumlah:* *${amountFormatted} ${symbol}*\n` +
+            `⛽ *Gas Used:* \`${tx.gasUsed || 'N/A'}\`\n` +
+            `💰 *Biaya Gas:* *${gasCostFormatted} ETH/Native*\n` +
+            `📦 *Block:* \`#${tx.blockNumber || 'N/A'}\`\n` +
+            `📅 *Waktu:* \`${date}\`\n`;
+
+        const keyboard = [];
+        
+        if (state.network.explorer && tx.hash) {
+            keyboard.push([{ text: '🔍 Lihat di Explorer', url: `${state.network.explorer}/tx/${tx.hash}` }]);
+        }
+
+        keyboard.push([{ text: '🔙 Kembali ke Dashboard', callback_data: 'tm_back_to_dashboard' }]);
+
+        this.bot.sendMessage(chatId, detailText, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    }
+
+    async showManualTransferOtherNetworks(chatId) {
+        const keyboard = [];
+        const customRpcs = this.getManualRpcs(chatId);
+        
+        Object.entries(customRpcs).forEach(([key, rpc]) => {
+            keyboard.push([{ text: `🌐 ${rpc.name} (${rpc.chainId})`, callback_data: `tm_pick_net_custom_${key}` }]);
+        });
+
+        keyboard.push([{ text: '➕ Tambah Jaringan / RPC', callback_data: 'tm_add_rpc' }]);
+        keyboard.push([{ text: '🔙 Kembali', callback_data: 'transfer_manual_menu' }]);
+
+        this.bot.sendMessage(chatId,
+            `🌐 *Jaringan Kustom (Manual Transfer)*\n\n` +
+            `Berikut adalah daftar jaringan kustom Anda untuk transfer manual:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    async startAddManualRpcFlow(chatId, step = 1, data = {}) {
+        this.userStates.set(chatId, { action: 'manual_transfer_awaiting_rpc_add', step, data });
+
+        if (step === 1) {
+            this.bot.sendMessage(chatId, '➕ *TAMBAH RPC TRANSFER MANUAL (1/4)*\n\nKirim Nama Jaringan (contoh: RPC Sepolia):', { parse_mode: 'Markdown' });
+        } else if (step === 2) {
+            this.bot.sendMessage(chatId, '➕ *TAMBAH RPC TRANSFER MANUAL (2/4)*\n\nKirim URL RPC (contoh: https://...):', { parse_mode: 'Markdown' });
+        } else if (step === 3) {
+            this.bot.sendMessage(chatId, '➕ *TAMBAH RPC TRANSFER MANUAL (3/4)*\n\nKirim Chain ID (contoh: 11155111):', { parse_mode: 'Markdown' });
+        } else if (step === 4) {
+            this.bot.sendMessage(chatId, '➕ *TAMBAH RPC TRANSFER MANUAL (4/4)*\n\nKirim Link Block Explorer atau /skip jika tidak ada:', { parse_mode: 'Markdown' });
+        }
+    }
+
+    async processAddManualRpc(chatId, input, userState) {
+        const { step, data } = userState;
+        try {
+            if (step === 1) {
+                data.name = input;
+                await this.startAddManualRpcFlow(chatId, 2, data);
+            } else if (step === 2) {
+                if (!input.startsWith('http')) {
+                    this.bot.sendMessage(chatId, '❌ URL tidak valid. Harus dimulai http/https. Coba lagi:');
+                    return;
+                }
+                data.rpc = input;
+                await this.startAddManualRpcFlow(chatId, 3, data);
+            } else if (step === 3) {
+                const chainId = parseInt(input);
+                if (isNaN(chainId)) {
+                    this.bot.sendMessage(chatId, '❌ Chain ID harus berupa angka. Coba lagi:');
+                    return;
+                }
+                data.chainId = chainId;
+                await this.startAddManualRpcFlow(chatId, 4, data);
+            } else if (step === 4) {
+                data.explorer = input === '/skip' ? '' : input;
+                
+                // Save custom rpc
+                const customRpcs = this.getManualRpcs(chatId);
+                const key = `custom_${Date.now()}`;
+                customRpcs[key] = data;
+                this.saveManualRpcs(chatId, customRpcs);
+
+                this.bot.sendMessage(chatId, `✅ Jaringan *${data.name}* berhasil disimpan!`, { parse_mode: 'Markdown' });
+                this.userStates.delete(chatId);
+                await this.showManualTransferOtherNetworks(chatId);
+            }
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Gagal menambahkan jaringan: ${error.message}`);
+            this.userStates.delete(chatId);
+        }
+    }
+
+    async askManualTransferWallet(chatId, network) {
+        const cryptoApp = this.userSessions.get(chatId);
+        if (!cryptoApp) {
+            this.bot.sendMessage(chatId, '❌ Sesi tidak ditemukan. Silakan /start ulang.');
+            return;
+        }
+
+        const wallets = await cryptoApp.loadWallets();
+        const walletEntries = Object.entries(wallets);
+
+        if (walletEntries.length === 0) {
+            this.bot.sendMessage(chatId,
+                `❌ *Belum ada wallet tersimpan.*\n\n` +
+                `Tambahkan wallet dulu melalui *💼 Wallet Management*.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'transfer_manual_menu' }]] }
+                }
+            );
+            return;
+        }
+
+        const walletRows = walletEntries.map(([address, data], i) => [{
+            text: `${i + 1}. ${data.nickname || address.slice(0, 8) + '...'} — ${address.slice(0, 6)}...${address.slice(-4)}`,
+            callback_data: `tm_pick_wallet_${i}`
+        }]);
+        walletRows.push([{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]);
+
+        this.userStates.set(chatId, {
+            action: 'tm_awaiting_wallet_pick',
+            network,
+            walletEntries: walletEntries.map(([address, data]) => ({ address, privateKey: data.privateKey, nickname: data.nickname || '' }))
+        });
+
+        this.bot.sendMessage(chatId,
+            `💸 *TRANSFER MANUAL — PILIH WALLET SUMBER*\n\n` +
+            `Jaringan: *${network.name}*\n` +
+            `Pilih wallet asal pengiriman:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: walletRows } }
+        );
+    }
+
+    async showManualTransferAssets(chatId, state) {
+        try {
+            await this.bot.sendMessage(chatId, '🔄 Menghubungkan provider & mengambil saldo...');
+            const provider = new ethers.JsonRpcProvider(state.network.rpc);
+            const balance = await provider.getBalance(state.wallet.address);
+            const balanceFormatted = ethers.formatEther(balance);
+            state.balanceFormatted = balanceFormatted;
+
+            const keyboard = [];
+            keyboard.push([{
+                text: `Native Coin (${parseFloat(balanceFormatted).toFixed(4)} ETH/Native)`,
+                callback_data: 'tm_pick_asset_native'
+            }]);
+
+            // Load custom tokens
+            const tokens = this.getManualTokens(chatId, state.network.chainId);
+            for (const tok of tokens) {
+                try {
+                    const tokContract = new ethers.Contract(tok.address, ERC20_ABI, provider);
+                    const tokBalance = await tokContract.balanceOf(state.wallet.address);
+                    const tokBalFormatted = ethers.formatUnits(tokBalance, tok.decimals);
+                    keyboard.push([{
+                        text: `🪙 ${tok.symbol} (${parseFloat(tokBalFormatted).toFixed(4)})`,
+                        callback_data: `tm_pick_asset_token_${tok.address}`
+                    }]);
+                } catch (e) {
+                    keyboard.push([{
+                        text: `🪙 ${tok.symbol} (Error Saldo)`,
+                        callback_data: `tm_pick_asset_token_${tok.address}`
+                    }]);
+                }
+            }
+
+            keyboard.push([{ text: '➕ Tambahkan Token', callback_data: 'tm_add_token' }]);
+            keyboard.push([{ text: '🔙 Kembali ke Jaringan', callback_data: 'transfer_manual_menu' }]);
+
+            this.userStates.set(chatId, state);
+
+            this.bot.sendMessage(chatId,
+                `📊 *INFORMASI SALDO & ASET*\n\n` +
+                `🌐 Jaringan: *${state.network.name}*\n` +
+                `💼 Wallet: *${state.wallet.nickname || state.wallet.address}*\n` +
+                `\`${state.wallet.address}\`\n\n` +
+                `Silakan pilih aset untuk dikirim atau tambahkan token baru:`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+            );
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Gagal mengambil saldo: ${error.message}\nPastikan RPC URL aktif.`);
+            await this.showManualTransferMenu(chatId);
+        }
+    }
+
+    async processManualTransferAddToken(chatId, address, userState) {
+        if (!ethers.isAddress(address)) {
+            this.bot.sendMessage(chatId, '❌ Alamat token tidak valid. Coba lagi:');
+            return;
+        }
+
+        try {
+            this.bot.sendMessage(chatId, '🔍 Mendeteksi detail token...');
+            const provider = new ethers.JsonRpcProvider(userState.network.rpc);
+            const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
+            
+            const [name, symbol, decimals] = await Promise.all([
+                tokenContract.name(),
+                tokenContract.symbol(),
+                tokenContract.decimals()
+            ]);
+
+            const tokenInfo = {
+                name,
+                symbol,
+                decimals: parseInt(decimals),
+                address
+            };
+
+            this.saveManualToken(chatId, userState.network.chainId, tokenInfo);
+            this.bot.sendMessage(chatId, `✅ Token *${symbol}* (${name}) berhasil ditambahkan!`, { parse_mode: 'Markdown' });
+
+            userState.action = 'tm_assets_screen';
+            await this.showManualTransferAssets(chatId, userState);
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Gagal memuat token: ${error.message}`);
+            userState.action = 'tm_assets_screen';
+            await this.showManualTransferAssets(chatId, userState);
+        }
+    }
+
+    async askManualTransferRecipient(chatId, state) {
+        state.action = 'manual_transfer_awaiting_recipient';
+        this.userStates.set(chatId, state);
+
+        const assetLabel = state.asset.type === 'native' ? 'Native Coin' : state.asset.symbol;
+        this.bot.sendMessage(chatId,
+            `📥 *TRANSFER MANUAL — PENERIMA TOKEN*\n\n` +
+            `Jaringan: *${state.network.name}*\n` +
+            `Aset: *${assetLabel}*\n\n` +
+            `Kirim alamat wallet penerima (0x...):`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]] } }
+        );
+    }
+
+    async askManualTransferAmount(chatId, state) {
+        state.action = 'manual_transfer_awaiting_amount';
+        this.userStates.set(chatId, state);
+
+        const assetLabel = state.asset.type === 'native' ? 'Native Coin' : state.asset.symbol;
+        this.bot.sendMessage(chatId,
+            `🔢 *TRANSFER MANUAL — JUMLAH KIRIM*\n\n` +
+            `Jaringan: *${state.network.name}*\n` +
+            `Aset: *${assetLabel}*\n` +
+            `Penerima: \`${state.recipient}\`\n\n` +
+            `Kirim jumlah koin/token yang akan dikirim (contoh: 0.05):`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]] } }
+        );
+    }
+
+    async showManualTransferGasOptions(chatId, state) {
+        try {
+            await this.bot.sendMessage(chatId, '⛽ Menghitung estimasi gas fee...');
+            const provider = new ethers.JsonRpcProvider(state.network.rpc);
+            const feeData = await provider.getFeeData();
+            
+            const gasLimit = state.asset.type === 'native' ? 21000n : 100000n;
+            const baseGasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.parseUnits('10', 'gwei');
+
+            const regulerGasPrice = baseGasPrice;
+            const fastGasPrice = baseGasPrice * 13n / 10n;
+            const instanGasPrice = baseGasPrice * 16n / 10n;
+
+            const regulerCost = ethers.formatEther(regulerGasPrice * gasLimit);
+            const fastCost = ethers.formatEther(fastGasPrice * gasLimit);
+            const instanCost = ethers.formatEther(instanGasPrice * gasLimit);
+
+            state.gasPrices = {
+                reguler: regulerGasPrice.toString(),
+                fast: fastGasPrice.toString(),
+                instan: instanGasPrice.toString(),
+                gasLimit: gasLimit.toString()
+            };
+
+            const keyboard = [
+                [{ text: `⚡ Instan (~${parseFloat(instanCost).toFixed(6)} ETH/Native)`, callback_data: 'tm_gas_instan' }],
+                [{ text: `🚀 Fast (~${parseFloat(fastCost).toFixed(6)} ETH/Native)`, callback_data: 'tm_gas_fast' }],
+                [{ text: `🐌 Reguler (~${parseFloat(regulerCost).toFixed(6)} ETH/Native)`, callback_data: 'tm_gas_reguler' }],
+                [{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]
+            ];
+
+            this.userStates.set(chatId, state);
+
+            this.bot.sendMessage(chatId,
+                `⛽ *ESTIMASI GAS FEE*\n\n` +
+                `Pilih opsi kecepatan transaksi Anda:`,
+                { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+            );
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Gagal memperkirakan gas: ${error.message}\nFallback ke gas standar.`);
+            state.selectedGas = {
+                mode: 'reguler',
+                gasPrice: ethers.parseUnits('20', 'gwei').toString(),
+                gasLimit: (state.asset.type === 'native' ? 21000n : 100000n).toString()
+            };
+            await this.showManualTransferConfirmation(chatId, state);
+        }
+    }
+
+    async showManualTransferConfirmation(chatId, state) {
+        const assetLabel = state.asset.type === 'native' ? 'Native Coin' : state.asset.symbol;
+        const speedLabel = state.selectedGas.mode.toUpperCase();
+        const gasCost = ethers.formatEther(BigInt(state.selectedGas.gasPrice) * BigInt(state.selectedGas.gasLimit));
+
+        const summary =
+            `📋 *RINGKASAN KONFIGURASI TRANSFER*\n\n` +
+            `🌐 Jaringan: *${state.network.name}*\n` +
+            `💼 Wallet: *${state.wallet.nickname}* (\`${state.wallet.address}\`)\n` +
+            `📥 Penerima: \`${state.recipient}\`\n` +
+            `🪙 Aset: *${assetLabel}*\n` +
+            `🔢 Jumlah: *${state.amount} ${state.asset.symbol || 'Native'}*\n` +
+            `⛽ Kecepatan Gas: *${speedLabel}*\n` +
+            `💰 Est. Biaya Gas: *${parseFloat(gasCost).toFixed(6)} ETH/Native*\n\n` +
+            `Apakah Anda ingin memulai transfer?`;
+
+        const keyboard = [
+            [{ text: '▶️ Mulai Kirim', callback_data: 'tm_send_confirm' }],
+            [{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]
+        ];
+
+        this.userStates.set(chatId, state);
+
+        this.bot.sendMessage(chatId, summary, {
+            parse_mode: 'Markdown',
+            reply_markup: { inline_keyboard: keyboard }
+        });
+    }
+
+    async executeManualTransfer(chatId, state) {
+        this.userStates.delete(chatId);
+        try {
+            await this.bot.sendMessage(chatId, '⏳ *Sedang memproses transaksi...*', { parse_mode: 'Markdown' });
+            
+            const provider = new ethers.JsonRpcProvider(state.network.rpc);
+            const wallet = new ethers.Wallet(state.wallet.privateKey, provider);
+
+            let tx;
+            if (state.asset.type === 'native') {
+                tx = await wallet.sendTransaction({
+                    to: state.recipient,
+                    value: ethers.parseEther(state.amount.toString()),
+                    gasPrice: BigInt(state.selectedGas.gasPrice),
+                    gasLimit: BigInt(state.selectedGas.gasLimit)
+                });
+            } else {
+                const tokenContract = new ethers.Contract(state.asset.address, ERC20_ABI, wallet);
+                tx = await tokenContract.transfer(
+                    state.recipient,
+                    ethers.parseUnits(state.amount.toString(), state.asset.decimals),
+                    {
+                        gasPrice: BigInt(state.selectedGas.gasPrice),
+                        gasLimit: BigInt(state.selectedGas.gasLimit)
+                    }
+                );
+            }
+
+            await this.bot.sendMessage(chatId,
+                `✅ *Transaksi Berhasil Dikirim!*\n\n` +
+                `📄 TX Hash: \`${tx.hash}\`\n` +
+                `⏳ Menunggu konfirmasi dari blockchain...`,
+                { parse_mode: 'Markdown' }
+            );
+
+            const receipt = await tx.wait();
+            
+            if (receipt.status === 1) {
+                await this.bot.sendMessage(chatId,
+                    `🎉 *TRANSAKSI SELESAI & SUKSES CONFRIMED!*\n\n` +
+                    `🌐 Jaringan: ${state.network.name}\n` +
+                    `📄 Block: ${receipt.blockNumber}\n` +
+                    `📄 TX Hash: \`${receipt.hash}\``,
+                    { parse_mode: 'Markdown' }
+                );
+            } else {
+                await this.bot.sendMessage(chatId, `❌ *Transaksi Gagal di Blockchain.*`, { parse_mode: 'Markdown' });
+            }
+
+        } catch (error) {
+            await this.bot.sendMessage(chatId, `❌ *Transaksi Gagal:* ${error.message}`, { parse_mode: 'Markdown' });
+        }
+        this.showMenuLainnya(chatId);
+    }
+
 
 
 
@@ -1155,6 +1987,7 @@ class TelegramFullController {
                 inline_keyboard: [
                     [{ text: '🔑 Ganti Password Admin', callback_data: 'owner_change_admin_pw' }],
                     [{ text: '🔑 Ganti Password Script', callback_data: 'owner_change_script_pw' }],
+                    [{ text: '🔐 Ganti Sandi Backup Wallet', callback_data: 'owner_change_backup_pw' }],
                     [{ text: '🔙 Kembali', callback_data: 'pengaturan_menu' }],
                 ]
             }
@@ -1488,6 +2321,330 @@ class TelegramFullController {
 
         } catch (error) {
             this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+        }
+    }
+
+    // ==============================================
+    // [FITUR BARU] Sandi Backup Wallet — Gerbang & Alur
+    // ==============================================
+
+    /**
+     * Gerbang utama — dipanggil saat user memilih wallet untuk lihat backup.
+     * Cek apakah sandi backup sudah di-set:
+     *   - Belum → tawarkan buat sandi
+     *   - Sudah → minta input sandi (max 3x percobaan)
+     */
+    async requestBackupUnlock(cryptoApp, chatId, address) {
+        const guard = this._getBackupGuard(chatId);
+        const salt = this._getBackupGuardSalt(chatId);
+
+        if (!guard.isSet(salt)) {
+            // Belum ada sandi backup → tawarkan buat
+            this.bot.sendMessage(chatId,
+                `🔐 *SANDI BACKUP DIPERLUKAN*\n\n` +
+                `Anda belum memiliki Kata Sandi Backup.\n` +
+                `Untuk melindungi data sensitif (Private Key & Mnemonic), ` +
+                `Anda wajib membuat sandi terlebih dahulu.\n\n` +
+                `Buat sekarang?`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '🔐 Buat Sandi Backup', callback_data: `backup_create_pw_${address}` }],
+                            [{ text: '🔙 Batal', callback_data: 'wallet_backup_list' }]
+                        ]
+                    }
+                }
+            );
+            return;
+        }
+
+        // Sudah ada sandi → minta input
+        this.userStates.set(chatId, {
+            action: 'awaiting_backup_unlock',
+            address,
+            attempts: 0
+        });
+
+        this.bot.sendMessage(chatId,
+            `🔑 *VERIFIKASI SANDI BACKUP*\n\n` +
+            `Masukkan Kata Sandi Backup untuk melihat data wallet ini:\n` +
+            `_(pesan sandi akan otomatis dihapus)_\n\n` +
+            `Kirim /cancel untuk membatalkan.`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: '❌ Batal', callback_data: 'wallet_backup_list' }]]
+                }
+            }
+        );
+    }
+
+    /**
+     * Mulai alur pembuatan sandi backup baru (pertama kali).
+     */
+    startCreateBackupPassword(chatId, address) {
+        this.userStates.set(chatId, {
+            action: 'backup_pw_set',
+            step: 'new',
+            address: address || null
+        });
+
+        this.bot.sendMessage(chatId,
+            `🔐 *BUAT SANDI BACKUP WALLET*\n\n` +
+            `Sandi ini akan diminta setiap kali Anda ingin melihat data backup (Private Key / Mnemonic).\n\n` +
+            `📝 Masukkan sandi baru (minimal 6 karakter):\n` +
+            `_(pesan sandi akan otomatis dihapus)_\n\n` +
+            `Kirim /cancel untuk membatalkan.`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: '❌ Batal', callback_data: 'wallet_backup_list' }]]
+                }
+            }
+        );
+    }
+
+    /**
+     * Mulai alur ganti sandi backup dari menu Pengaturan.
+     */
+    startChangeBackupPassword(chatId) {
+        if (!this.isOwner(chatId)) {
+            this.bot.sendMessage(chatId, '🚫 Akses ditolak.');
+            return;
+        }
+
+        const guard = this._getBackupGuard(chatId);
+        const salt = this._getBackupGuardSalt(chatId);
+
+        if (!guard.isSet(salt)) {
+            // Belum pernah set — langsung alur buat baru (tanpa address target)
+            this.userStates.set(chatId, {
+                action: 'backup_pw_set',
+                step: 'new',
+                address: null,
+                fromSettings: true
+            });
+
+            this.bot.sendMessage(chatId,
+                `🔐 *BUAT SANDI BACKUP WALLET*\n\n` +
+                `Anda belum memiliki Sandi Backup. Mari buat sekarang.\n\n` +
+                `📝 Masukkan sandi baru (minimal 6 karakter):\n` +
+                `_(pesan sandi akan otomatis dihapus)_\n\n` +
+                `Kirim /cancel untuk membatalkan.`,
+                {
+                    parse_mode: 'Markdown',
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '❌ Batal', callback_data: 'owner_change_password_menu' }]]
+                    }
+                }
+            );
+            return;
+        }
+
+        // Sudah ada sandi → minta verifikasi sandi lama dulu
+        this.userStates.set(chatId, {
+            action: 'backup_pw_change',
+            step: 'verify_old',
+            attempts: 0,
+            fromSettings: true
+        });
+
+        this.bot.sendMessage(chatId,
+            `🔐 *GANTI SANDI BACKUP WALLET*\n\n` +
+            `Masukkan sandi backup Anda saat ini untuk verifikasi:\n` +
+            `_(pesan sandi akan otomatis dihapus)_\n\n` +
+            `Kirim /cancel untuk membatalkan.`,
+            {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [[{ text: '❌ Batal', callback_data: 'owner_change_password_menu' }]]
+                }
+            }
+        );
+    }
+
+    /**
+     * Handler teks utama untuk semua state backup password:
+     *   - awaiting_backup_unlock (verifikasi sebelum lihat backup)
+     *   - backup_pw_set (buat sandi baru, step: new → confirm)
+     *   - backup_pw_change (ganti sandi, step: verify_old → new → confirm)
+     */
+    async processBackupPasswordInput(cryptoApp, chatId, text, userState, msg) {
+        // Hapus pesan berisi sandi dari chat
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+
+        const input = text.trim();
+
+        // Cancel
+        if (input === '/cancel') {
+            this.userStates.delete(chatId);
+            this.bot.sendMessage(chatId, '⏹️ Dibatalkan.');
+            if (userState.fromSettings) {
+                this.showUbahSandiMenu(chatId);
+            } else {
+                this.bot.sendMessage(chatId, 'Kembali ke daftar backup:', {
+                    reply_markup: {
+                        inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'wallet_backup_list' }]]
+                    }
+                });
+            }
+            return;
+        }
+
+        const guard = this._getBackupGuard(chatId);
+        const salt = this._getBackupGuardSalt(chatId);
+
+        // ── STATE: Verifikasi sandi sebelum lihat backup ──
+        if (userState.action === 'awaiting_backup_unlock') {
+            const ok = guard.verify(input, salt);
+            if (ok) {
+                this.userStates.delete(chatId);
+                this.bot.sendMessage(chatId, '✅ Sandi benar! Menampilkan data backup...');
+                await this.showBackupPhrase(cryptoApp, chatId, userState.address);
+            } else {
+                userState.attempts = (userState.attempts || 0) + 1;
+                if (userState.attempts >= 3) {
+                    this.userStates.delete(chatId);
+                    this.bot.sendMessage(chatId,
+                        `🚫 *Sandi salah 3x berturut-turut!*\n\nAkses backup dikunci. Silakan coba lagi nanti.`,
+                        {
+                            parse_mode: 'Markdown',
+                            reply_markup: {
+                                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'wallet_backup_list' }]]
+                            }
+                        }
+                    );
+                } else {
+                    this.userStates.set(chatId, userState);
+                    this.bot.sendMessage(chatId,
+                        `❌ Sandi salah! Percobaan ${userState.attempts}/3.\n\nMasukkan sandi yang benar atau kirim /cancel:`
+                    );
+                }
+            }
+            return;
+        }
+
+        // ── STATE: Buat sandi baru (backup_pw_set) ──
+        if (userState.action === 'backup_pw_set') {
+            if (userState.step === 'new') {
+                if (input.length < 6) {
+                    this.bot.sendMessage(chatId, '❌ Sandi minimal 6 karakter. Coba lagi:');
+                    return;
+                }
+                userState.newPassword = input;
+                userState.step = 'confirm';
+                this.userStates.set(chatId, userState);
+                this.bot.sendMessage(chatId,
+                    `✅ Sandi diterima.\n\n🔁 Konfirmasi: kirim ulang sandi yang sama:`
+                );
+            } else if (userState.step === 'confirm') {
+                if (input !== userState.newPassword) {
+                    this.bot.sendMessage(chatId,
+                        `❌ Sandi tidak cocok!\n\nMulai ulang — masukkan sandi baru lagi:`
+                    );
+                    userState.step = 'new';
+                    delete userState.newPassword;
+                    this.userStates.set(chatId, userState);
+                    return;
+                }
+
+                // Simpan sandi
+                const saved = guard.setPassword(input, salt);
+                this.userStates.delete(chatId);
+
+                if (saved) {
+                    this.bot.sendMessage(chatId,
+                        `✅ *Sandi Backup Wallet berhasil dibuat!*\n\n` +
+                        `Sandi ini akan diminta setiap kali Anda melihat data backup wallet.\n` +
+                        `Anda bisa mengubahnya nanti di ⚙️ Pengaturan → 🔑 Ubah Sandi.`,
+                        { parse_mode: 'Markdown' }
+                    );
+
+                    // Kalau ada address target, langsung minta unlock
+                    if (userState.address && cryptoApp) {
+                        await this.requestBackupUnlock(cryptoApp, chatId, userState.address);
+                    } else if (userState.fromSettings) {
+                        this.showUbahSandiMenu(chatId);
+                    } else {
+                        this.bot.sendMessage(chatId, 'Kembali ke daftar backup:', {
+                            reply_markup: {
+                                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'wallet_backup_list' }]]
+                            }
+                        });
+                    }
+                } else {
+                    this.bot.sendMessage(chatId, '❌ Gagal menyimpan sandi. Coba lagi nanti.');
+                }
+            }
+            return;
+        }
+
+        // ── STATE: Ganti sandi (backup_pw_change) ──
+        if (userState.action === 'backup_pw_change') {
+            if (userState.step === 'verify_old') {
+                const ok = guard.verify(input, salt);
+                if (ok) {
+                    userState.step = 'new';
+                    userState.attempts = 0;
+                    this.userStates.set(chatId, userState);
+                    this.bot.sendMessage(chatId,
+                        `✅ Sandi lama benar!\n\n📝 Masukkan sandi backup *baru* (minimal 6 karakter):`,
+                        { parse_mode: 'Markdown' }
+                    );
+                } else {
+                    userState.attempts = (userState.attempts || 0) + 1;
+                    if (userState.attempts >= 3) {
+                        this.userStates.delete(chatId);
+                        this.bot.sendMessage(chatId,
+                            `🚫 *Sandi salah 3x!* Proses ganti sandi dibatalkan.`,
+                            { parse_mode: 'Markdown' }
+                        );
+                        this.showUbahSandiMenu(chatId);
+                    } else {
+                        this.userStates.set(chatId, userState);
+                        this.bot.sendMessage(chatId,
+                            `❌ Sandi salah! Percobaan ${userState.attempts}/3.\n\nMasukkan sandi lama yang benar:`
+                        );
+                    }
+                }
+            } else if (userState.step === 'new') {
+                if (input.length < 6) {
+                    this.bot.sendMessage(chatId, '❌ Sandi minimal 6 karakter. Coba lagi:');
+                    return;
+                }
+                userState.newPassword = input;
+                userState.step = 'confirm';
+                this.userStates.set(chatId, userState);
+                this.bot.sendMessage(chatId,
+                    `✅ Sandi baru diterima.\n\n🔁 Konfirmasi: kirim ulang sandi baru yang sama:`
+                );
+            } else if (userState.step === 'confirm') {
+                if (input !== userState.newPassword) {
+                    this.bot.sendMessage(chatId,
+                        `❌ Sandi tidak cocok!\n\nMulai ulang — masukkan sandi baru lagi:`
+                    );
+                    userState.step = 'new';
+                    delete userState.newPassword;
+                    this.userStates.set(chatId, userState);
+                    return;
+                }
+
+                const saved = guard.setPassword(input, salt);
+                this.userStates.delete(chatId);
+
+                if (saved) {
+                    this.bot.sendMessage(chatId,
+                        `✅ *Sandi Backup Wallet berhasil diubah!*\n\n` +
+                        `Sandi baru sudah aktif dan berlaku langsung.`,
+                        { parse_mode: 'Markdown' }
+                    );
+                } else {
+                    this.bot.sendMessage(chatId, '❌ Gagal menyimpan sandi baru. Coba lagi nanti.');
+                }
+                this.showUbahSandiMenu(chatId);
+            }
+            return;
         }
     }
 
@@ -3594,6 +4751,47 @@ class TelegramFullController {
                 await this.processTransferSetup(chatId, text, userState);
                 break;
 
+            // ── Manual Transfer states ──
+            case 'manual_transfer_awaiting_rpc_add':
+                await this.processAddManualRpc(chatId, text, userState);
+                break;
+            case 'manual_transfer_awaiting_recipient':
+                if (!ethers.isAddress(text.trim())) {
+                    this.bot.sendMessage(chatId, '❌ Alamat tidak valid. Kirim ulang alamat wallet penerima (0x...):');
+                    return;
+                }
+                userState.recipient = text.trim();
+                await this.askManualTransferAmount(chatId, userState);
+                break;
+            case 'manual_transfer_awaiting_amount':
+                const amt = parseFloat(text.trim());
+                if (isNaN(amt) || amt <= 0) {
+                    this.bot.sendMessage(chatId, '❌ Jumlah tidak valid. Kirim ulang angka (contoh: 0.05):');
+                    return;
+                }
+                userState.amount = text.trim();
+                await this.showManualTransferGasOptions(chatId, userState);
+                break;
+            case 'manual_transfer_awaiting_token_add':
+                await this.processManualTransferAddToken(chatId, text.trim(), userState);
+                break;
+            case 'manual_transfer_awaiting_api_key':
+                const target = userState.target;
+                const apiKeys = this.getExplorerApiKeys(chatId);
+                if (text.trim() === '/delete') {
+                    delete apiKeys[target];
+                    this.saveExplorerApiKeys(chatId, apiKeys);
+                    this.userStates.delete(chatId);
+                    this.bot.sendMessage(chatId, `🗑️ API Key untuk ${target.toUpperCase()} berhasil dihapus!`);
+                } else {
+                    apiKeys[target] = text.trim();
+                    this.saveExplorerApiKeys(chatId, apiKeys);
+                    this.userStates.delete(chatId);
+                    this.bot.sendMessage(chatId, `✅ API Key untuk ${target.toUpperCase()} berhasil diperbarui!`);
+                }
+                await this.showExplorerApiKeysMenu(chatId);
+                break;
+
             // ── Morse Cipher states ──
             case 'awaiting_morse_encrypt':
                 await this.processMorseEncrypt(chatId, text, msg);
@@ -3618,6 +4816,24 @@ class TelegramFullController {
                 break;
             case 'migration_awaiting_import_password':
                 await this.processMigrationImportPassword(chatId, text, userState, msg);
+                break;
+
+            // ── Backup Wallet Password Guard states ──
+            case 'awaiting_backup_unlock':
+            case 'backup_pw_set':
+            case 'backup_pw_change':
+                await this.processBackupPasswordInput(cryptoApp, chatId, text, userState, msg);
+                break;
+
+            // ── Tracker states ──
+            case 'tracker_awaiting_addr':
+                await this.processTrackerAddr(chatId, text, userState);
+                break;
+            case 'tracker_awaiting_name':
+                await this.processTrackerName(chatId, text, userState);
+                break;
+            case 'tracker_awaiting_min_val':
+                await this.processTrackerMinVal(chatId, text, userState);
                 break;
         }
     }
@@ -3673,7 +4889,11 @@ class TelegramFullController {
             }
             else if (data.startsWith('wallet_show_backup_')) {
                 const address = data.replace('wallet_show_backup_', '');
-                await this.showBackupPhrase(cryptoApp, chatId, address);
+                await this.requestBackupUnlock(cryptoApp, chatId, address);
+            }
+            else if (data.startsWith('backup_create_pw_')) {
+                const address = data.replace('backup_create_pw_', '');
+                this.startCreateBackupPassword(chatId, address);
             }
             else if (data.startsWith('wallet_backup_sent_')) {
                 const address = data.replace('wallet_backup_sent_', '');
@@ -4057,6 +5277,163 @@ class TelegramFullController {
             else if (data === 'owner_change_script_pw') {
                 this.startOwnerChangePassword(chatId, 'script');
             }
+            else if (data === 'owner_change_backup_pw') {
+                this.startChangeBackupPassword(chatId);
+            }
+            // ── Tracker Menu Callbacks ──
+            else if (data === 'tracker_menu') {
+                this.showTrackerMenu(chatId);
+            }
+            else if (data === 'tracker_add_wallet') {
+                this.userStates.set(chatId, { action: 'tracker_awaiting_addr' });
+                this.bot.sendMessage(chatId,
+                    `👁️ *TAMBAH WALLET PEMANTAU (1/3)*\n\n` +
+                    `Kirimkan **Alamat Publik** wallet yang ingin dipantau (0x...):\n\n` +
+                    `⚠️ _Hanya alamat publik. JANGAN kirim Private Key atau Seed Phrase!_\n\n` +
+                    `_(Kirim /cancel untuk membatalkan)_`,
+                    { parse_mode: 'Markdown' }
+                );
+            }
+            else if (data === 'tracker_list_wallets') {
+                this.showTrackerListWallets(chatId);
+            }
+            else if (data === 'tracker_toggle') {
+                const state = this.getTrackerState(chatId);
+                state.active = !state.active;
+                this.saveTrackerState(chatId, state);
+                if (state.active) {
+                    this.startTrackerPolling(chatId);
+                    this.bot.sendMessage(chatId, '🟢 *Tracking Bot diaktifkan di latar belakang!*', { parse_mode: 'Markdown' });
+                } else {
+                    this.stopTrackerPolling(chatId);
+                    this.bot.sendMessage(chatId, '🔴 *Tracking Bot dihentikan.*', { parse_mode: 'Markdown' });
+                }
+                this.showTrackerMenu(chatId);
+            }
+            else if (data === 'tracker_settings') {
+                this.showTrackerSettings(chatId);
+            }
+            else if (data === 'tracker_min_val_menu') {
+                this.showTrackerMinValMenu(chatId);
+            }
+            else if (data === 'tracker_toggle_native') {
+                const state = this.getTrackerState(chatId);
+                state.notifyNative = state.notifyNative === undefined ? false : !state.notifyNative;
+                this.saveTrackerState(chatId, state);
+                this.showTrackerSettings(chatId);
+            }
+            else if (data === 'tracker_toggle_erc20') {
+                const state = this.getTrackerState(chatId);
+                state.notifyErc20 = state.notifyErc20 === undefined ? false : !state.notifyErc20;
+                this.saveTrackerState(chatId, state);
+                this.showTrackerSettings(chatId);
+            }
+            else if (data.startsWith('tracker_set_min_')) {
+                const action = data.replace('tracker_set_min_', '');
+                if (action === 'manual') {
+                    this.userStates.set(chatId, { action: 'tracker_awaiting_min_val' });
+                    this.bot.sendMessage(chatId, `✏️ *Masukkan minimum nilai USDT* (contoh: 2.5):\n\n_(Kirim /cancel untuk membatalkan)_`, { parse_mode: 'Markdown' });
+                } else {
+                    const val = parseFloat(action);
+                    const state = this.getTrackerState(chatId);
+                    state.minUsdt = val;
+                    this.saveTrackerState(chatId, state);
+                    this.bot.sendMessage(chatId, `✅ Filter minimum nilai berhasil diubah menjadi: *$${val} USDT*`, { parse_mode: 'Markdown' });
+                    this.showTrackerSettings(chatId);
+                }
+            }
+            else if (data.startsWith('tracker_toggle_net_')) {
+                const state = this.userStates.get(chatId);
+                if (state && state.action === 'tracker_awaiting_chains') {
+                    const netKey = data.replace('tracker_toggle_net_', '');
+                    if (state.selectedNetworks.includes(netKey)) {
+                        state.selectedNetworks = state.selectedNetworks.filter(n => n !== netKey);
+                    } else {
+                        state.selectedNetworks.push(netKey);
+                    }
+                    this.userStates.set(chatId, state);
+                    
+                    // Edit message markup to reflect toggled option
+                    const keyboard = [];
+                    const keys = Object.keys(TRACKER_NETWORKS);
+                    for (let i = 0; i < keys.length; i += 2) {
+                        const row = [];
+                        const key1 = keys[i];
+                        const net1 = TRACKER_NETWORKS[key1];
+                        const active1 = state.selectedNetworks.includes(key1) ? '✅' : '⬜️';
+                        row.push({ text: `${active1} ${net1.name}`, callback_data: `tracker_toggle_net_${key1}` });
+
+                        if (i + 1 < keys.length) {
+                            const key2 = keys[i + 1];
+                            const net2 = TRACKER_NETWORKS[key2];
+                            const active2 = state.selectedNetworks.includes(key2) ? '✅' : '⬜️';
+                            row.push({ text: `${active2} ${net2.name}`, callback_data: `tracker_toggle_net_${key2}` });
+                        }
+                        keyboard.push(row);
+                    }
+                    keyboard.push([
+                        { text: '🌟 Select All', callback_data: 'tracker_net_all' },
+                        { text: '❌ Clear All', callback_data: 'tracker_net_clear' }
+                    ]);
+                    keyboard.push([{ text: '💾 Simpan & Selesai', callback_data: 'tracker_save_wallet' }]);
+
+                    this.bot.editMessageReplyMarkup({ inline_keyboard: keyboard }, { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
+                }
+            }
+            else if (data === 'tracker_net_all') {
+                const state = this.userStates.get(chatId);
+                if (state && state.action === 'tracker_awaiting_chains') {
+                    state.selectedNetworks = Object.keys(TRACKER_NETWORKS);
+                    this.userStates.set(chatId, state);
+                    this.showTrackerAddChainsMenu(chatId, state);
+                }
+            }
+            else if (data === 'tracker_net_clear') {
+                const state = this.userStates.get(chatId);
+                if (state && state.action === 'tracker_awaiting_chains') {
+                    state.selectedNetworks = [];
+                    this.userStates.set(chatId, state);
+                    this.showTrackerAddChainsMenu(chatId, state);
+                }
+            }
+            else if (data === 'tracker_save_wallet') {
+                const state = this.userStates.get(chatId);
+                if (state && state.action === 'tracker_awaiting_chains') {
+                    if (state.selectedNetworks.length === 0) {
+                        this.bot.answerCallbackQuery(query.id, { text: '⚠️ Pilih minimal 1 jaringan!', show_alert: true });
+                        return;
+                    }
+                    const wallets = this.getTrackedWallets(chatId);
+                    wallets.push({
+                        address: state.address,
+                        name: state.name,
+                        networks: state.selectedNetworks
+                    });
+                    this.saveTrackedWallets(chatId, wallets);
+                    this.userStates.delete(chatId);
+                    this.bot.sendMessage(chatId, `✅ *Wallet berhasil ditambahkan ke daftar pantauan!*`, { parse_mode: 'Markdown' });
+                    this.showTrackerListWallets(chatId);
+                }
+            }
+            else if (data.startsWith('tracker_del_wallet_')) {
+                const idx = parseInt(data.replace('tracker_del_wallet_', ''));
+                const wallets = this.getTrackedWallets(chatId);
+                if (wallets[idx]) {
+                    const name = wallets[idx].name;
+                    wallets.splice(idx, 1);
+                    this.saveTrackedWallets(chatId, wallets);
+                    this.bot.sendMessage(chatId, `🗑️ Wallet *${name}* berhasil dihapus dari daftar pantauan.`, { parse_mode: 'Markdown' });
+                }
+                this.showTrackerListWallets(chatId);
+            }
+            else if (data.startsWith('tracker_history_')) {
+                const page = parseInt(data.replace('tracker_history_', '')) || 1;
+                this.showTrackerHistory(chatId, page);
+            }
+            else if (data.startsWith('tracker_hist_detail_')) {
+                const idx = parseInt(data.replace('tracker_hist_detail_', ''));
+                this.showTrackerHistoryDetail(chatId, idx);
+            }
             else if (data === 'morse_menu') {
                 this.showMorseMenu(chatId);
             }
@@ -4331,6 +5708,123 @@ class TelegramFullController {
                 }
             }
 
+            // ── 💸 Manual Transfer callbacks ──
+            else if (data === 'transfer_manual_menu') {
+                this.userStates.delete(chatId);
+                await this.showManualTransferMenu(chatId);
+            }
+            else if (data === 'tm_menu_other_networks') {
+                await this.showManualTransferOtherNetworks(chatId);
+            }
+            else if (data === 'tm_add_rpc') {
+                await this.startAddManualRpcFlow(chatId);
+            }
+            else if (data === 'tm_setup_api_keys') {
+                await this.showExplorerApiKeysMenu(chatId);
+            }
+            else if (data.startsWith('tm_edit_api_')) {
+                const target = data.replace('tm_edit_api_', '');
+                this.userStates.set(chatId, {
+                    action: 'manual_transfer_awaiting_api_key',
+                    target
+                });
+                this.bot.sendMessage(chatId,
+                    `🔑 *UPDATE API KEY (${target.toUpperCase()})*\n\n` +
+                    `Kirimkan API Key baru Anda untuk ${target.toUpperCase()} (atau kirim \`/delete\` untuk menghapus key yang ada):`,
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'tm_setup_api_keys' }]] } }
+                );
+            }
+            else if (data.startsWith('tm_pick_net_default_')) {
+                const netKey = data.replace('tm_pick_net_default_', '');
+                const network = MANUAL_NETWORKS[netKey];
+                if (network) {
+                    await this.askManualTransferWallet(chatId, { ...network });
+                }
+            }
+            else if (data.startsWith('tm_pick_net_custom_')) {
+                const netKey = data.replace('tm_pick_net_custom_', '');
+                const customRpcs = this.getManualRpcs(chatId);
+                const network = customRpcs[netKey];
+                if (network) {
+                    await this.askManualTransferWallet(chatId, { ...network });
+                }
+            }
+            else if (data.startsWith('tm_pick_wallet_')) {
+                const idx = parseInt(data.replace('tm_pick_wallet_', ''));
+                const state = this.userStates.get(chatId);
+                if (!state || state.action !== 'tm_awaiting_wallet_pick') return;
+                const walletInfo = state.walletEntries[idx];
+                if (!walletInfo) return;
+                state.wallet = walletInfo;
+                state.action = 'tm_assets_screen';
+                await this.showManualTransferAssets(chatId, state);
+            }
+            else if (data === 'tm_pick_asset_native') {
+                const state = this.userStates.get(chatId);
+                if (!state) return;
+                state.asset = { type: 'native', symbol: 'Native', decimals: 18 };
+                await this.showAssetDashboard(chatId, state);
+            }
+            else if (data.startsWith('tm_pick_asset_token_')) {
+                const tokenAddress = data.replace('tm_pick_asset_token_', '');
+                const state = this.userStates.get(chatId);
+                if (!state) return;
+                const tokens = this.getManualTokens(chatId, state.network.chainId);
+                const tokenInfo = tokens.find(t => t.address.toLowerCase() === tokenAddress.toLowerCase());
+                if (tokenInfo) {
+                    state.asset = { type: 'token', ...tokenInfo };
+                    await this.showAssetDashboard(chatId, state);
+                }
+            }
+            else if (data === 'tm_start_send_flow') {
+                const state = this.userStates.get(chatId);
+                if (!state) return;
+                await this.askManualTransferRecipient(chatId, state);
+            }
+            else if (data.startsWith('tm_tx_detail_')) {
+                const idx = parseInt(data.replace('tm_tx_detail_', ''));
+                const state = this.userStates.get(chatId);
+                if (!state) return;
+                await this.showTransactionDetail(chatId, state, idx);
+            }
+            else if (data === 'tm_back_to_dashboard') {
+                const state = this.userStates.get(chatId);
+                if (!state) return;
+                await this.showAssetDashboard(chatId, state);
+            }
+            else if (data === 'tm_add_token') {
+                const state = this.userStates.get(chatId);
+                if (!state) return;
+                state.action = 'manual_transfer_awaiting_token_add';
+                this.userStates.set(chatId, state);
+                this.bot.sendMessage(chatId,
+                    '🪙 *TAMBAH TOKEN*\n\nKirim alamat kontrak token ERC-20 (0x...):', 
+                    { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]] } }
+                );
+            }
+            else if (data === 'tm_gas_instan') {
+                const state = this.userStates.get(chatId);
+                if (!state || !state.gasPrices) return;
+                state.selectedGas = { mode: 'instan', gasPrice: state.gasPrices.instan, gasLimit: state.gasPrices.gasLimit };
+                await this.showManualTransferConfirmation(chatId, state);
+            }
+            else if (data === 'tm_gas_fast') {
+                const state = this.userStates.get(chatId);
+                if (!state || !state.gasPrices) return;
+                state.selectedGas = { mode: 'fast', gasPrice: state.gasPrices.fast, gasLimit: state.gasPrices.gasLimit };
+                await this.showManualTransferConfirmation(chatId, state);
+            }
+            else if (data === 'tm_gas_reguler') {
+                const state = this.userStates.get(chatId);
+                if (!state || !state.gasPrices) return;
+                state.selectedGas = { mode: 'reguler', gasPrice: state.gasPrices.reguler, gasLimit: state.gasPrices.gasLimit };
+                await this.showManualTransferConfirmation(chatId, state);
+            }
+            else if (data === 'tm_send_confirm') {
+                const state = this.userStates.get(chatId);
+                if (!state || !state.selectedGas) return;
+                await this.executeManualTransfer(chatId, state);
+            }
 
             // ── 2FA Management callbacks ──
             else if (data === '2fa_menu') {
@@ -4521,6 +6015,13 @@ class TelegramFullController {
         if (this.bot) {
             this.bot.stopPolling();
             console.log('🤖 Main Bot stopped.');
+        }
+
+        if (this.trackerIntervals) {
+            for (const [chatId, interval] of this.trackerIntervals.entries()) {
+                clearInterval(interval);
+            }
+            this.trackerIntervals.clear();
         }
 
         console.log(`Cleaning up ${this.userSessions.size} active sessions...`);
@@ -5084,6 +6585,642 @@ class TelegramFullController {
             }).on('error', (err) => { reject(err); });
         });
     }
+
+    // ===================================
+    // 📊 TRACKING BOT FLOW (INDEPENDENT)
+    // ===================================
+
+    showTrackerMenu(chatId) {
+        const state = this.getTrackerState(chatId);
+        const wallets = this.getTrackedWallets(chatId);
+        const statusText = state.active ? '🟢 AKTIF' : '🔴 NON-AKTIF';
+        
+        const keyboard = [
+            [
+                { text: '➕ Tambah Wallet', callback_data: 'tracker_add_wallet' },
+                { text: '📋 Daftar Pantauan', callback_data: 'tracker_list_wallets' }
+            ],
+            [
+                { text: '📜 History Tracking', callback_data: 'tracker_history_1' },
+                { text: state.active ? '🔴 Hentikan Tracker' : '🟢 Aktifkan Tracker', callback_data: 'tracker_toggle' }
+            ],
+            [
+                { text: '⚙️ Pengaturan', callback_data: 'tracker_settings' },
+                { text: '🔙 Kembali', callback_data: 'menu_lainnya' }
+            ]
+        ];
+
+        this.bot.sendMessage(chatId,
+            `📊 *TRACKING BOT (MAINNET)*\n\n` +
+            `Status: *${statusText}*\n` +
+            `Wallet dipantau: *${wallets.length} wallet*\n\n` +
+            `Pelacak ini memantau transaksi token masuk secara real-time pada 16 jaringan mainnet.`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    showTrackerListWallets(chatId) {
+        const wallets = this.getTrackedWallets(chatId);
+        if (wallets.length === 0) {
+            const keyboard = [[{ text: '➕ Tambah Wallet', callback_data: 'tracker_add_wallet' }], [{ text: '🔙 Kembali', callback_data: 'tracker_menu' }]];
+            this.bot.sendMessage(chatId, `📋 *DAFTAR PANTAUAN*\n\nBelum ada wallet yang dipantau.`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            return;
+        }
+
+        let txt = `📋 *DAFTAR PANTAUAN*\n\n`;
+        const keyboard = [];
+        wallets.forEach((w, idx) => {
+            const truncated = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
+            txt += `*${idx + 1}. ${w.name}*\n` +
+                   `• Address: \`${w.address}\`\n` +
+                   `• Jaringan: ${w.networks.map(n => TRACKER_NETWORKS[n]?.name || n).join(', ')}\n\n`;
+            
+            keyboard.push([{ text: `🗑️ Hapus: ${w.name}`, callback_data: `tracker_del_wallet_${idx}` }]);
+        });
+
+        keyboard.push([{ text: '🔙 Kembali', callback_data: 'tracker_menu' }]);
+
+        this.bot.sendMessage(chatId, txt, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+    }
+
+    async showTrackerHistory(chatId, page = 1) {
+        const history = this.getTrackerHistory(chatId);
+        const limit = 5;
+        const total = history.length;
+        const totalPages = Math.ceil(total / limit) || 1;
+
+        if (total === 0) {
+            const keyboard = [[{ text: '🔙 Kembali', callback_data: 'tracker_menu' }]];
+            this.bot.sendMessage(chatId, `📜 *RIWAYAT TRACKING*\n\nBelum ada transaksi masuk yang terdeteksi.`, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+            return;
+        }
+
+        const startIndex = (page - 1) * limit;
+        const pageItems = history.slice(startIndex, startIndex + limit);
+
+        const keyboard = pageItems.map((item, idx) => {
+            const absoluteIndex = startIndex + idx;
+            const priceText = item.estimatedUsdt && item.estimatedUsdt !== 'Unknown' ? `~$${item.estimatedUsdt}` : '⚠️ $0';
+            return [{
+                text: `⬇️ ${item.amount} ${item.tokenSymbol} (${priceText}) • ${item.networkName}`,
+                callback_data: `tracker_hist_detail_${absoluteIndex}`
+            }];
+        });
+
+        const navRow = [];
+        if (page > 1) {
+            navRow.push({ text: '⬅️ Sebelumnya', callback_data: `tracker_history_${page - 1}` });
+        }
+        if (startIndex + limit < total) {
+            navRow.push({ text: 'Berikutnya ➡️', callback_data: `tracker_history_${page + 1}` });
+        }
+        if (navRow.length > 0) {
+            keyboard.push(navRow);
+        }
+
+        keyboard.push([{ text: '🔙 Kembali ke Menu', callback_data: 'tracker_menu' }]);
+
+        this.bot.sendMessage(chatId,
+            `📜 *RIWAYAT TRACKING (Halaman ${page}/${totalPages})*\n\n` +
+            `Pilih transaksi untuk melihat detail lengkap:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    showTrackerHistoryDetail(chatId, index) {
+        const history = this.getTrackerHistory(chatId);
+        const item = history[index];
+        if (!item) {
+            this.bot.sendMessage(chatId, `❌ Detail transaksi tidak ditemukan.`);
+            this.showTrackerHistory(chatId, 1);
+            return;
+        }
+
+        const explorerUrl = TRACKER_NETWORKS[item.networkKey]?.explorer ? `${TRACKER_NETWORKS[item.networkKey].explorer}/tx/${item.txHash}` : '';
+        const priceVal = item.estimatedUsdt && item.estimatedUsdt !== 'Unknown' ? `*~$${item.estimatedUsdt} USDT*` : `*⚠️ Tidak ada harga — Kemungkinan scam/airdrop*`;
+
+        const keyboard = [];
+        if (explorerUrl) {
+            keyboard.push([{ text: '🔗 Lihat di Explorer', url: explorerUrl }]);
+        }
+        keyboard.push([{ text: '🔙 Kembali ke Riwayat', callback_data: 'tracker_history_1' }]);
+
+        const msgText = `📋 *DETAIL TRACKING #${parseInt(index) + 1}*\n\n` +
+            `💼 *Wallet:* \`${item.walletName}\` (\`${item.walletAddress.slice(0, 6)}...${item.walletAddress.slice(-4)}\`)\n` +
+            `🌐 *Jaringan:* \`${item.networkName}\` (Chain ID: ${TRACKER_NETWORKS[item.networkKey]?.chainId || '-'})\n\n` +
+            `🪙 *Token:* ${item.tokenName} (${item.tokenSymbol})\n` +
+            `📋 *Kontrak:* \`${item.tokenAddress || 'Native'}\`\n` +
+            `🔢 *Jumlah:* \`${item.amount}\` ${item.tokenSymbol}\n` +
+            `💵 *Estimasi Saat Masuk:* ${priceVal}\n\n` +
+            `👤 *Pengirim:* \`${item.from}\`\n` +
+            `📄 *TX Hash:* \`${item.txHash}\`\n` +
+            `⏰ *Waktu Terdeteksi:* ${new Date(item.timestamp * 1000).toLocaleString()}`;
+
+        this.bot.sendMessage(chatId, msgText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } });
+    }
+
+    showTrackerSettings(chatId) {
+        const state = this.getTrackerState(chatId);
+        if (state.minUsdt === undefined) state.minUsdt = 0;
+        if (state.notifyNative === undefined) state.notifyNative = true;
+        if (state.notifyErc20 === undefined) state.notifyErc20 = true;
+        this.saveTrackerState(chatId, state);
+
+        const keyboard = [
+            [
+                { text: `Native Alerts: ${state.notifyNative ? '🟢 ON' : '🔴 OFF'}`, callback_data: 'tracker_toggle_native' },
+                { text: `ERC20 Alerts: ${state.notifyErc20 ? '🟢 ON' : '🔴 OFF'}`, callback_data: 'tracker_toggle_erc20' }
+            ],
+            [
+                { text: `Filter Min Value: $${state.minUsdt} USDT`, callback_data: 'tracker_min_val_menu' }
+            ],
+            [
+                { text: '🔙 Kembali', callback_data: 'tracker_menu' }
+            ]
+        ];
+
+        this.bot.sendMessage(chatId,
+            `⚙️ *PENGATURAN TRACKER*\n\n` +
+            `Atur filter dan jenis notifikasi untuk tracking bot:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    showTrackerMinValMenu(chatId) {
+        const keyboard = [
+            [
+                { text: '$0 (Semua)', callback_data: 'tracker_set_min_0' },
+                { text: '$1 USDT', callback_data: 'tracker_set_min_1' },
+                { text: '$5 USDT', callback_data: 'tracker_set_min_5' }
+            ],
+            [
+                { text: '$10 USDT', callback_data: 'tracker_set_min_10' },
+                { text: '$50 USDT', callback_data: 'tracker_set_min_50' },
+                { text: '$100 USDT', callback_data: 'tracker_set_min_100' }
+            ],
+            [
+                { text: '✏️ Input Manual', callback_data: 'tracker_set_min_manual' },
+                { text: '🔙 Kembali', callback_data: 'tracker_settings' }
+            ]
+        ];
+
+        this.bot.sendMessage(chatId,
+            `✏️ *PILIH MINIMUM ESTIMASI NILAI USDT*\n\n` +
+            `Notifikasi hanya akan dikirim jika estimasi nilai token masuk melebihi nilai filter ini.`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    async processTrackerAddr(chatId, text, state) {
+        const addr = text.trim();
+        if (!ethers.isAddress(addr)) {
+            this.bot.sendMessage(chatId, '❌ Alamat tidak valid. Silakan kirim ulang alamat publik wallet (0x...):');
+            return;
+        }
+        state.address = addr;
+        state.action = 'tracker_awaiting_name';
+        this.userStates.set(chatId, state);
+        this.bot.sendMessage(chatId, `👁️ *TAMBAH WALLET PEMANTAU (2/3)*\n\nBeri nama panggilan untuk wallet ini (contoh: \`Wallet Utama\`, \`Whale 1\`):`);
+    }
+
+    async processTrackerName(chatId, text, state) {
+        const name = text.trim();
+        if (!name) {
+            this.bot.sendMessage(chatId, '❌ Nama tidak boleh kosong. Silakan kirim ulang nama wallet:');
+            return;
+        }
+        state.name = name;
+        state.selectedNetworks = [];
+        state.action = 'tracker_awaiting_chains';
+        this.userStates.set(chatId, state);
+        this.showTrackerAddChainsMenu(chatId, state);
+    }
+
+    showTrackerAddChainsMenu(chatId, state) {
+        const keyboard = [];
+        const keys = Object.keys(TRACKER_NETWORKS);
+        
+        for (let i = 0; i < keys.length; i += 2) {
+            const row = [];
+            const key1 = keys[i];
+            const net1 = TRACKER_NETWORKS[key1];
+            const active1 = state.selectedNetworks.includes(key1) ? '✅' : '⬜️';
+            row.push({ text: `${active1} ${net1.name}`, callback_data: `tracker_toggle_net_${key1}` });
+
+            if (i + 1 < keys.length) {
+                const key2 = keys[i + 1];
+                const net2 = TRACKER_NETWORKS[key2];
+                const active2 = state.selectedNetworks.includes(key2) ? '✅' : '⬜️';
+                row.push({ text: `${active2} ${net2.name}`, callback_data: `tracker_toggle_net_${key2}` });
+            }
+            keyboard.push(row);
+        }
+
+        keyboard.push([
+            { text: '🌟 Select All', callback_data: 'tracker_net_all' },
+            { text: '❌ Clear All', callback_data: 'tracker_net_clear' }
+        ]);
+        keyboard.push([{ text: '💾 Simpan & Selesai', callback_data: 'tracker_save_wallet' }]);
+
+        this.bot.sendMessage(chatId,
+            `👁️ *TAMBAH WALLET PEMANTAU (3/3)*\n\n` +
+            `*Wallet:* \`${state.address}\`\n` +
+            `*Nama:* \`${state.name}\`\n\n` +
+            `Pilih jaringan yang ingin dipantau:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: keyboard } }
+        );
+    }
+
+    async processTrackerMinVal(chatId, text, state) {
+        const val = parseFloat(text.trim());
+        if (isNaN(val) || val < 0) {
+            this.bot.sendMessage(chatId, '❌ Nilai tidak valid. Kirim angka (contoh: 2.5):');
+            return;
+        }
+        const trackerState = this.getTrackerState(chatId);
+        trackerState.minUsdt = val;
+        this.saveTrackerState(chatId, trackerState);
+        this.userStates.delete(chatId);
+        this.bot.sendMessage(chatId, `✅ Filter minimum nilai berhasil diubah menjadi: *$${val} USDT*`, { parse_mode: 'Markdown' });
+        this.showTrackerSettings(chatId);
+    }
+
+    resumeTrackerPollings() {
+        const dir = path.join(__dirname, '../data');
+        if (!fs.existsSync(dir)) return;
+        try {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+                if (file.endsWith('_tracker_state.json')) {
+                    const chatId = file.replace('_tracker_state.json', '');
+                    const state = this.getTrackerState(chatId);
+                    if (state && state.active) {
+                        this.startTrackerPolling(chatId);
+                    }
+                }
+            }
+        } catch (e) {
+            console.error('Failed to resume tracker pollings:', e);
+        }
+    }
+
+    startTrackerPolling(chatId) {
+        this.stopTrackerPolling(chatId);
+        console.log(`Starting tracker polling for chat: ${chatId}`);
+        this.runTrackerScan(chatId).catch(console.error);
+
+        const interval = setInterval(() => {
+            this.runTrackerScan(chatId).catch(console.error);
+        }, 45000);
+
+        this.trackerIntervals.set(chatId, interval);
+    }
+
+    stopTrackerPolling(chatId) {
+        const active = this.trackerIntervals.get(chatId);
+        if (active) {
+            clearInterval(active);
+            this.trackerIntervals.delete(chatId);
+            console.log(`Stopped tracker polling for chat: ${chatId}`);
+        }
+    }
+
+    _trackerHttpGet(url, headers = {}) {
+        return new Promise((resolve, reject) => {
+            const fetchUrl = (currentUrl, redirectCount = 0) => {
+                if (redirectCount > 5) {
+                    reject(new Error('Too many redirects'));
+                    return;
+                }
+                const parsed = new URL(currentUrl);
+                const options = {
+                    hostname: parsed.hostname,
+                    path: parsed.pathname + parsed.search,
+                    method: 'GET',
+                    headers: {
+                        'User-Agent': 'FastarxBot/1.0',
+                        ...headers
+                    },
+                    timeout: 8000
+                };
+                const req = https.get(options, (res) => {
+                    if (res.statusCode === 301 || res.statusCode === 302) {
+                        let newUrl = res.headers.location;
+                        if (!newUrl.startsWith('http')) {
+                            newUrl = parsed.protocol + '//' + parsed.host + newUrl;
+                        }
+                        fetchUrl(newUrl, redirectCount + 1);
+                        return;
+                    }
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => resolve(data));
+                });
+                req.on('error', err => reject(err));
+                req.on('timeout', () => {
+                    req.destroy();
+                    reject(new Error('Request timeout'));
+                });
+            };
+            fetchUrl(url);
+        });
+    }
+
+    async getTokenPriceInUsdt(chainId, tokenAddress, tokenSymbol) {
+        try {
+            const nativeCgIds = {
+                1: 'ethereum',
+                56: 'binancecoin',
+                137: 'matic-network',
+                43114: 'avalanche-2',
+                250: 'fantom',
+                100: 'xdai',
+                42220: 'celo',
+                25: 'crypto-com-chain',
+                42161: 'ethereum',
+                10: 'ethereum',
+                8453: 'ethereum',
+                59144: 'ethereum',
+                324: 'ethereum',
+                534352: 'ethereum',
+                81457: 'ethereum',
+                5000: 'mantle'
+            };
+
+            if (!tokenAddress) {
+                const cgId = nativeCgIds[chainId];
+                if (!cgId) return null;
+                const url = `https://api.coingecko.com/api/v3/simple/price?ids=${cgId}&vs_currencies=usd`;
+                const raw = await this._trackerHttpGet(url, { 'User-Agent': 'FastarxBot/1.0' });
+                const res = JSON.parse(raw);
+                if (res && res[cgId] && res[cgId].usd) {
+                    return parseFloat(res[cgId].usd);
+                }
+                return null;
+            }
+
+            const dexUrl = `https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`;
+            try {
+                const dexRaw = await this._trackerHttpGet(dexUrl, { 'User-Agent': 'FastarxBot/1.0' });
+                const dexRes = JSON.parse(dexRaw);
+                if (dexRes && dexRes.pairs && dexRes.pairs.length > 0) {
+                    const price = parseFloat(dexRes.pairs[0].priceUsd);
+                    if (!isNaN(price) && price > 0) {
+                        return price;
+                    }
+                }
+            } catch (e) {
+                console.error(`DexScreener price lookup failed for ${tokenAddress}:`, e);
+            }
+
+            const platformIds = {
+                1: 'ethereum',
+                56: 'binance-smart-chain',
+                137: 'polygon-pos',
+                43114: 'avalanche',
+                250: 'fantom',
+                100: 'xdai',
+                42220: 'celo',
+                25: 'cronos',
+                42161: 'arbitrum-one',
+                10: 'optimistic-ethereum',
+                8453: 'base',
+                59144: 'linea',
+                324: 'zksync',
+                534352: 'scroll',
+                81457: 'blast'
+            };
+
+            const platform = platformIds[chainId];
+            if (platform) {
+                const cgUrl = `https://api.coingecko.com/api/v3/simple/token_price/${platform}?contract_addresses=${tokenAddress}&vs_currencies=usd`;
+                try {
+                    const cgRaw = await this._trackerHttpGet(cgUrl, { 'User-Agent': 'FastarxBot/1.0' });
+                    const cgRes = JSON.parse(cgRaw);
+                    const addrLower = tokenAddress.toLowerCase();
+                    if (cgRes && cgRes[addrLower] && cgRes[addrLower].usd) {
+                        return parseFloat(cgRes[addrLower].usd);
+                    }
+                } catch (e) {
+                    console.error(`CoinGecko fallback lookup failed for ${tokenAddress}:`, e);
+                }
+            }
+        } catch (err) {
+            console.error('Failed to get token price:', err);
+        }
+        return null;
+    }
+
+    async runTrackerScan(chatId) {
+        try {
+            const wallets = this.getTrackedWallets(chatId);
+            if (wallets.length === 0) return;
+
+            const state = this.getTrackerState(chatId);
+            if (!state.active) return;
+
+            if (!state.lastScannedBlocks) state.lastScannedBlocks = {};
+            if (!state.scannedTxHashes) state.scannedTxHashes = [];
+
+            const apiKeys = this.getExplorerApiKeys(chatId);
+
+            for (const wallet of wallets) {
+                for (const netKey of wallet.networks) {
+                    const net = TRACKER_NETWORKS[netKey];
+                    if (!net) continue;
+
+                    let nativeUrl = '';
+                    let tokenUrl = '';
+                    const walletLower = wallet.address.toLowerCase();
+
+                    if (net.hasFreeApi) {
+                        nativeUrl = `${net.apiUrl}?module=account&action=txlist&address=${wallet.address}&page=1&offset=15&sort=desc`;
+                        tokenUrl = `${net.apiUrl}?module=account&action=tokentx&address=${wallet.address}&page=1&offset=15&sort=desc`;
+                    } else {
+                        let key = '';
+                        if (netKey === 'bsc') key = apiKeys.bscscan || apiKeys.etherscan || '';
+                        else if (netKey === 'optimism') key = apiKeys.etherscan || '';
+                        else if (netKey === 'linea') key = apiKeys.etherscan || '';
+                        else if (netKey === 'scroll') key = apiKeys.etherscan || '';
+                        else if (netKey === 'fantom') key = apiKeys.etherscan || '';
+                        else if (netKey === 'cronos') key = apiKeys.etherscan || '';
+                        else key = apiKeys.etherscan || '';
+
+                        if (!key) continue;
+
+                        nativeUrl = `${net.apiUrl}?chainid=${net.chainId}&module=account&action=txlist&address=${wallet.address}&page=1&offset=15&sort=desc&apikey=${key}`;
+                        tokenUrl = `${net.apiUrl}?chainid=${net.chainId}&module=account&action=tokentx&address=${wallet.address}&page=1&offset=15&sort=desc&apikey=${key}`;
+                    }
+
+                    if (state.notifyNative !== false) {
+                        try {
+                            const raw = await this._trackerHttpGet(nativeUrl);
+                            const res = JSON.parse(raw);
+                            if (res && res.result && Array.isArray(res.result)) {
+                                const newTxs = res.result.filter(tx => 
+                                    tx.to && tx.to.toLowerCase() === walletLower && 
+                                    !state.scannedTxHashes.includes(tx.hash)
+                                );
+
+                                for (const tx of newTxs) {
+                                    const valueEth = ethers.formatEther(tx.value);
+                                    const valueFloat = parseFloat(valueEth);
+                                    if (valueFloat <= 0) continue;
+
+                                    const price = await this.getTokenPriceInUsdt(net.chainId, null, 'ETH');
+                                    let estimatedUsdt = 'Unknown';
+                                    let filterPass = true;
+
+                                    if (price !== null) {
+                                        const usdVal = valueFloat * price;
+                                        estimatedUsdt = usdVal.toFixed(2);
+                                        if (state.minUsdt && usdVal < state.minUsdt) {
+                                            filterPass = false;
+                                        }
+                                    }
+
+                                    state.scannedTxHashes.push(tx.hash);
+                                    if (state.scannedTxHashes.length > 500) {
+                                        state.scannedTxHashes.shift();
+                                    }
+
+                                    if (filterPass) {
+                                        const history = this.getTrackerHistory(chatId);
+                                        const symbol = netKey === 'bsc' ? 'BNB' : (netKey === 'polygon' ? 'POL' : (netKey === 'avax' ? 'AVAX' : (netKey === 'fantom' ? 'FTM' : (netKey === 'celo' ? 'CELO' : (netKey === 'mantle' ? 'MNT' : 'ETH')))));
+                                        const historyItem = {
+                                            txHash: tx.hash,
+                                            walletAddress: wallet.address,
+                                            walletName: wallet.name,
+                                            networkKey: netKey,
+                                            networkName: net.name,
+                                            tokenSymbol: symbol,
+                                            tokenName: 'Native Gas Token',
+                                            tokenAddress: '',
+                                            amount: valueEth,
+                                            estimatedUsdt,
+                                            from: tx.from,
+                                            timestamp: parseInt(tx.timeStamp) || Math.floor(Date.now() / 1000)
+                                        };
+                                        history.unshift(historyItem);
+                                        if (history.length > 100) history.pop();
+                                        this.saveTrackerHistory(chatId, history);
+
+                                        const explorerTxUrl = net.explorer ? `${net.explorer}/tx/${tx.hash}` : '';
+                                        const priceText = estimatedUsdt !== 'Unknown' ? `*~$${estimatedUsdt} USDT*` : `*⚠️ Tidak ada harga — Kemungkinan scam/airdrop*`;
+
+                                        let alertText = `🔔 *TOKEN MASUK TERDETEKSI!*\n\n` +
+                                            `💼 *Wallet:* \`${wallet.name}\` (\`${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}\`)\n` +
+                                            `🌐 *Jaringan:* \`${net.name}\` (Chain ID: ${net.chainId})\n\n` +
+                                            `🪙 *Token:* ${symbol} (Native Gas Token)\n` +
+                                            `🔢 *Jumlah:* \`${parseFloat(valueEth).toFixed(6)}\` ${symbol}\n` +
+                                            `💵 *Estimasi:* ${priceText}\n\n` +
+                                            `👤 *Pengirim:* \`${tx.from}\`\n` +
+                                            `📄 *TX Hash:* \`${tx.hash}\`\n` +
+                                            `⏰ *Waktu:* ${new Date(historyItem.timestamp * 1000).toLocaleString()}`;
+
+                                        const inlineKeyboard = [];
+                                        if (explorerTxUrl) {
+                                            inlineKeyboard.push([{ text: '🔗 Lihat di Explorer', url: explorerTxUrl }]);
+                                        }
+
+                                        await this.bot.sendMessage(chatId, alertText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: inlineKeyboard } });
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`Error scanning native txs for ${wallet.address} on ${net.name}:`, err.message);
+                        }
+                    }
+
+                    if (state.notifyErc20 !== false) {
+                        try {
+                            const raw = await this._trackerHttpGet(tokenUrl);
+                            const res = JSON.parse(raw);
+                            if (res && res.result && Array.isArray(res.result)) {
+                                const newTxs = res.result.filter(tx => 
+                                    tx.to && tx.to.toLowerCase() === walletLower && 
+                                    !state.scannedTxHashes.includes(tx.hash)
+                                );
+
+                                for (const tx of newTxs) {
+                                    const decimals = parseInt(tx.tokenDecimal) || 18;
+                                    const amountFormatted = ethers.formatUnits(tx.value, decimals);
+                                    const amountFloat = parseFloat(amountFormatted);
+                                    if (amountFloat <= 0) continue;
+
+                                    const price = await this.getTokenPriceInUsdt(net.chainId, tx.contractAddress, tx.tokenSymbol);
+                                    let estimatedUsdt = 'Unknown';
+                                    let filterPass = true;
+
+                                    if (price !== null) {
+                                        const usdVal = amountFloat * price;
+                                        estimatedUsdt = usdVal.toFixed(2);
+                                        if (state.minUsdt && usdVal < state.minUsdt) {
+                                            filterPass = false;
+                                        }
+                                    }
+
+                                    state.scannedTxHashes.push(tx.hash);
+                                    if (state.scannedTxHashes.length > 500) {
+                                        state.scannedTxHashes.shift();
+                                    }
+
+                                    if (filterPass) {
+                                        const history = this.getTrackerHistory(chatId);
+                                        const historyItem = {
+                                            txHash: tx.hash,
+                                            walletAddress: wallet.address,
+                                            walletName: wallet.name,
+                                            networkKey: netKey,
+                                            networkName: net.name,
+                                            tokenSymbol: tx.tokenSymbol || 'Unknown',
+                                            tokenName: tx.tokenName || 'Unknown Token',
+                                            tokenAddress: tx.contractAddress,
+                                            amount: amountFormatted,
+                                            estimatedUsdt,
+                                            from: tx.from,
+                                            timestamp: parseInt(tx.timeStamp) || Math.floor(Date.now() / 1000)
+                                        };
+                                        history.unshift(historyItem);
+                                        if (history.length > 100) history.pop();
+                                        this.saveTrackerHistory(chatId, history);
+
+                                        const explorerTxUrl = net.explorer ? `${net.explorer}/tx/${tx.hash}` : '';
+                                        const priceText = estimatedUsdt !== 'Unknown' ? `*~$${estimatedUsdt} USDT*` : `*⚠️ Tidak ada harga — Kemungkinan scam/airdrop*`;
+
+                                        let alertText = `🔔 *TOKEN MASUK TERDETEKSI!*\n\n` +
+                                            `💼 *Wallet:* \`${wallet.name}\` (\`${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}\`)\n` +
+                                            `🌐 *Jaringan:* \`${net.name}\` (Chain ID: ${net.chainId})\n\n` +
+                                            `🪙 *Token:* ${tx.tokenName || 'Unknown'} (${tx.tokenSymbol || 'Unknown'})\n` +
+                                            `📋 *Kontrak:* \`${tx.contractAddress}\`\n` +
+                                            `🔢 *Jumlah:* \`${parseFloat(amountFormatted).toFixed(6)}\` ${tx.tokenSymbol || ''}\n` +
+                                            `💵 *Estimasi:* ${priceText}\n\n` +
+                                            `👤 *Pengirim:* \`${tx.from}\`\n` +
+                                            `📄 *TX Hash:* \`${tx.hash}\`\n` +
+                                            `⏰ *Waktu:* ${new Date(historyItem.timestamp * 1000).toLocaleString()}`;
+
+                                        const inlineKeyboard = [];
+                                        if (explorerTxUrl) {
+                                            inlineKeyboard.push([{ text: '🔗 Lihat di Explorer', url: explorerTxUrl }]);
+                                        }
+
+                                        await this.bot.sendMessage(chatId, alertText, { parse_mode: 'Markdown', reply_markup: { inline_keyboard: inlineKeyboard } });
+                                    }
+                                }
+                            }
+                        } catch (err) {
+                            console.error(`Error scanning token txs for ${wallet.address} on ${net.name}:`, err.message);
+                        }
+                    }
+                }
+            }
+
+            this.saveTrackerState(chatId, state);
+        } catch (e) {
+            console.error('Error during tracker scan iteration:', e);
+        }
+    }
+
 }
 
 module.exports = TelegramFullController;

@@ -119,9 +119,19 @@
 | **Token Auto-Forward** | Auto-kirim ERC-20 token ke alamat tujuan |
 | **Auto Token Detection** | Scan dan deteksi semua token ERC-20 yang memiliki saldo secara otomatis |
 | **Continuous Monitoring** | Pantau wallet terus-menerus dengan interval 30 detik |
-| **Gas-Safe Transfer** | Kalkulasi biaya gas sebelum transfer agar saldo tidak habis untuk fee |
+| **Gas-Safe Transfer** | Auto-kalkulasi biaya gas sebelum transfer agar saldo tidak habis untuk fee |
 
+### 📊 Tracking Bot (Mainnet)
 
+| Fitur | Deskripsi |
+|-------|-----------|
+| **16 Jaringan Mainnet** | Mendukung pemantauan di Ethereum, BNB Chain, Polygon, Avalanche, Fantom, Gnosis, Celo, Cronos, Arbitrum, Optimism, Base, Linea, zkSync Era, Scroll, Blast, dan Mantle |
+| **Watch-Only (Read-Only)** | Memantau wallet hanya dengan alamat publik tanpa memerlukan Private Key atau Mnemonic Phrase |
+| **USDT Valuation & Scam Alert** | Deteksi otomatis nilai USDT token masuk via CoinGecko/DexScreener API (menampilkan peringatan jika bernilai $0/tidak ada harga sebagai indikasi scam) |
+| **Riwayat Tracking Terperinci** | Riwayat transaksi dengan 5 tombol navigasi interaktif + tombol "Lihat History Lainnya" (paginated) |
+| **Filter Estimasi Nilai** | Filter notifikasi masuk berdasarkan minimum nilai estimasi dalam USDT |
+| **Kontrol Fleksibel** | Nyalakan/matikan deteksi transaksi native gas token dan token ERC-20 secara independen |
+| **Auto-Resume** | Polling tracker otomatis pulih dan aktif kembali secara otomatis ketika bot direstart |
 
 ## 📦 Instalasi
 
@@ -238,7 +248,7 @@ Bot akan otomatis mendeteksi mode:
 🌐 RPC Management       →  Kelola konfigurasi RPC & gas
 🔗 WalletConnect        →  Connect ke DApp via WalletConnect
 🦊 RPC Inject           →  Kelola server MetaMask RPC Inject
-📂 Menu Lainnya         →  Transfer Bot, Morse Cipher, dll
+📂 Menu Lainnya         →  Transfer Bot, Morse Cipher, Tracking Bot (Mainnet), dll
 ⚙️ Pengaturan           →  DApp Approval, ganti password, dll
 ```
 
@@ -262,6 +272,24 @@ Bot akan otomatis mendeteksi mode:
    - Chain ID     : (sesuai konfigurasi)
 5. Ganti ke network baru di MetaMask
 6. Setiap transaksi dari DApp → bot otomatis sign & kirim! ✅
+```
+
+### Alur & Panduan Tracking Bot
+
+```
+1. Buka menu 📂 Menu Lainnya → 📊 Tracking Bot
+2. Tambah Wallet Pemantau:
+   - Kirim alamat publik (read-only, tanpa private key/seed phrase)
+   - Beri nama/label kustom
+   - Pilih jaringan yang ingin dipantau (bisa pilih banyak dari 16 mainnet)
+3. Set Explorer API Keys (Opsional):
+   - Masuk ke menu ⚙️ Pengaturan → 🔑 Set Explorer API Keys
+   - Masukkan API Key untuk BSC, Fantom, Cronos, atau Linea jika memantau jaringan tersebut
+4. Nyalakan Polling:
+   - Klik 🟢 Aktifkan Tracking untuk memulai pemantauan di latar belakang (tiap 45 detik)
+5. Notifikasi & Riwayat:
+   - Setiap ada transfer masuk akan dikirim detail nominal & nilai USDT estimasinya
+   - Klik 📜 History Tracking untuk melihat riwayat transaksi masuk paginated (5 item per halaman)
 ```
 
 ---
@@ -404,6 +432,9 @@ data/
 ├── <session_id>_rpc-config.json    ← Konfigurasi RPC & DApp
 ├── <session_id>_rpc-ports.json     ← Konfigurasi port RPC Inject
 ├── <session_id>_master.key         ← Kunci enkripsi session (RAHASIA!)
+├── <chat_id>_tracked_wallets.json  ← Daftar wallet pemantauan tracker
+├── <chat_id>_tracker_state.json     ← Status aktif & cursor filter tracker
+├── <chat_id>_tracker_history.json   ← Riwayat notifikasi transaksi tracker
 └── 2fa_*.json                      ← Data Google Authenticator
 ```
 
