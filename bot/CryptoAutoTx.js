@@ -9,6 +9,12 @@ const TelegramBot = require('node-telegram-bot-api');
 const MetaMaskRpcServer = require('../rpc/MetaMaskRpcServer');
 const { globalTxQueue } = require('../core/TransactionQueue');
 const TwoFactorAuth = require('../auth/TwoFactorAuth');
+const { Keypair, VersionedTransaction, Transaction, nacl } = require('@solana/web3.js');
+const { derivePath } = require('ed25519-hd-key');
+const { Account: AptosAccount } = require('@aptos-labs/ts-sdk');
+const { Ed25519Keypair } = require('@mysten/sui/keypairs/ed25519');
+const { TonClient, WalletContractV4 } = require('@ton/ton');
+const { mnemonicToWalletKey } = require('@ton/crypto');
 
 class CryptoAutoTx {
     constructor(rl, secureConfig, sessionId) {
@@ -24,7 +30,9 @@ class CryptoAutoTx {
             reset: '\x1b[0m'
         };
 
-        this.dataDir = path.join(__dirname, '../data');
+        const isPkg = typeof process.pkg !== 'undefined';
+        const projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
+        this.dataDir = path.join(projectRoot, '.data');
         this.ensureDataDirectory();
 
         this.wallet = null;
@@ -49,6 +57,30 @@ class CryptoAutoTx {
 
         this.walletFile = path.join(this.dataDir, `${this.sessionId}_wallets.enc`);
         this.rpcFile = path.join(this.dataDir, `${this.sessionId}_rpc-config.json`);
+        this.solanaRpcFile = path.join(this.dataDir, `${this.sessionId}_solana-rpc-config.json`);
+        this.currentSolanaRpc = null;
+        this.currentSolanaRpcName = null;
+        this.savedSolanaRpcs = {};
+
+        this.aptosRpcFile = path.join(this.dataDir, `${this.sessionId}_aptos-rpc-config.json`);
+        this.currentAptosRpc = null;
+        this.currentAptosRpcName = null;
+        this.savedAptosRpcs = {};
+
+        this.suiRpcFile = path.join(this.dataDir, `${this.sessionId}_sui-rpc-config.json`);
+        this.currentSuiRpc = null;
+        this.currentSuiRpcName = null;
+        this.savedSuiRpcs = {};
+
+        this.tonRpcFile = path.join(this.dataDir, `${this.sessionId}_ton-rpc-config.json`);
+        this.currentTonRpc = null;
+        this.currentTonRpcName = null;
+        this.savedTonRpcs = {};
+
+        this.nearRpcFile = path.join(this.dataDir, `${this.sessionId}_near-rpc-config.json`);
+        this.currentNearRpc = null;
+        this.currentNearRpcName = null;
+        this.savedNearRpcs = {};
 
         this.masterKey = null;
         this.transactionCounts = new Map();
@@ -62,9 +94,14 @@ class CryptoAutoTx {
 
         // [v19.2] DApp Connection Approval — Saklar persetujuan koneksi DApp
         this.dappApprovalRequired = false;  // false = auto-connect, true = manual approval via Telegram
+        this.globalDappApproval = false; // [v20.2] Global DApp Approval: true = selalu minta konfirmasi (tidak tergantung RPC)
         this.pendingDappApprovals = new Map(); // Map<approvalId, {resolve, reject, timer, details}>
         this._dappApprovalCounter = 0;
         this.connectedDapps = []; // Array of { id, url, name, connectedAt, via }
+
+        // [v20.1] Auto Approve Transaction / Message Sign (per-RPC)
+        this.pendingTxApprovals = new Map();
+        this._txApprovalCounter = 0;
 
         // Inactivity Timer
         this.dappInactivityTimeout = 30; // default 30 minutes
@@ -82,6 +119,11 @@ class CryptoAutoTx {
         }
 
         this.loadRpcConfig();
+        this.loadSolanaRpcConfig();
+        this.loadAptosRpcConfig();
+        this.loadSuiRpcConfig();
+        this.loadTonRpcConfig();
+        this.loadNearRpcConfig();
     }
 
     ensureDataDirectory() {
@@ -100,7 +142,20 @@ class CryptoAutoTx {
     loadRpcConfig() {
         try {
             if (fs.existsSync(this.rpcFile)) {
-                const rpcConfig = JSON.parse(fs.readFileSync(this.rpcFile, 'utf8'));
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.rpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
                 this.currentRpc = rpcConfig.currentRpc || this.currentRpc;
                 this.currentChainId = rpcConfig.currentChainId || this.currentChainId;
                 this.currentRpcName = rpcConfig.currentRpcName || this.currentRpcName;
@@ -132,6 +187,10 @@ class CryptoAutoTx {
                     this.dappApprovalRequired = rpcConfig.dappApprovalRequired;
                 }
 
+                if (rpcConfig.globalDappApproval !== undefined) {
+                    this.globalDappApproval = rpcConfig.globalDappApproval;
+                }
+
                 if (rpcConfig.connectedDapps !== undefined) {
                     this.connectedDapps = rpcConfig.connectedDapps;
                 }
@@ -148,7 +207,8 @@ class CryptoAutoTx {
 
                 console.log(`[Session ${this.sessionId}] Loaded RPC configuration:`, this.currentRpcName);
                 console.log(`[Session ${this.sessionId}] Auto-Save RPC: ${this.autoSaveRpc ? 'ON' : 'OFF'}`);
-                console.log(`[Session ${this.sessionId}] DApp Approval: ${this.dappApprovalRequired ? 'ON (Manual)' : 'OFF (Auto)'}`);
+                console.log(`[Session ${this.sessionId}] DApp Connection: ${this.globalDappApproval ? 'ON (Global Manual)' : 'OFF (Ikut per-RPC)'}`);
+                console.log(`[Session ${this.sessionId}] Auto Approve Tx (active RPC): ${this.isAutoApproveActive() ? 'ON (Auto)' : 'OFF (Manual)'}`);
 
             } else {
                 console.log(`[Session ${this.sessionId}] File RPC tidak ditemukan, membuat default...`);
@@ -180,6 +240,7 @@ class CryptoAutoTx {
 
     saveRpcConfig() {
         try {
+            this.ensureMasterKey();
             const rpcConfig = {
                 currentRpc: this.currentRpc,
                 currentChainId: this.currentChainId,
@@ -187,17 +248,551 @@ class CryptoAutoTx {
                 savedRpcs: this.savedRpcs,
                 autoSaveRpc: this.autoSaveRpc,
                 dappApprovalRequired: this.dappApprovalRequired,
+                globalDappApproval: this.globalDappApproval,
                 connectedDapps: this.connectedDapps,
                 dappInactivityTimeout: this.dappInactivityTimeout,
                 updatedAt: new Date().toISOString()
             };
-            fs.writeFileSync(this.rpcFile, JSON.stringify(rpcConfig, null, 2));
-            console.log(`[Session ${this.sessionId}] RPC configuration saved`);
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.rpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] RPC configuration saved (encrypted)`);
             return true;
         } catch (error) {
             console.log(`[Session ${this.sessionId}] Error saving RPC config:`, error.message);
             return false;
         }
+    }
+
+    // 🟣 SOLANA RPC CONFIGURATION SYSTEM
+    loadSolanaRpcConfig() {
+        try {
+            if (fs.existsSync(this.solanaRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.solanaRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentSolanaRpc = rpcConfig.currentRpc || null;
+                    this.currentSolanaRpcName = rpcConfig.currentRpcName || null;
+                    this.savedSolanaRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC Solana tidak ditemukan, membuat default...`);
+                this.savedSolanaRpcs = {};
+                this.currentSolanaRpc = null;
+                this.currentSolanaRpcName = null;
+                this.saveSolanaRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading Solana RPC config:`, error.message);
+        }
+    }
+
+    saveSolanaRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentSolanaRpc,
+                currentRpcName: this.currentSolanaRpcName,
+                savedRpcs: this.savedSolanaRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.solanaRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] Solana RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving Solana RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addSolanaRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `solana_${Date.now()}`;
+        this.savedSolanaRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            priorityFee: 'Medium', // Default: Medium (Low, Medium, High, Very High)
+            commitment: 'confirmed', // Default: confirmed (processed, confirmed, finalized)
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentSolanaRpc) {
+            this.currentSolanaRpc = rpcUrl;
+            this.currentSolanaRpcName = name;
+        }
+        this.saveSolanaRpcConfig();
+        return key;
+    }
+
+    deleteSolanaRpc(key) {
+        if (!this.savedSolanaRpcs[key]) return false;
+        const targetRpc = this.savedSolanaRpcs[key].rpc;
+        delete this.savedSolanaRpcs[key];
+        
+        if (this.currentSolanaRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedSolanaRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentSolanaRpc = this.savedSolanaRpcs[nextKey].rpc;
+                this.currentSolanaRpcName = this.savedSolanaRpcs[nextKey].name;
+            } else {
+                this.currentSolanaRpc = null;
+                this.currentSolanaRpcName = null;
+            }
+        }
+        this.saveSolanaRpcConfig();
+        return true;
+    }
+
+    selectSolanaRpc(key) {
+        if (!this.savedSolanaRpcs[key]) return false;
+        const selected = this.savedSolanaRpcs[key];
+        this.currentSolanaRpc = selected.rpc;
+        this.currentSolanaRpcName = selected.name;
+        this.saveSolanaRpcConfig();
+        return true;
+    }
+
+    updateSolanaRpcProperty(key, property, value) {
+        if (!this.savedSolanaRpcs[key]) return false;
+        this.savedSolanaRpcs[key][property] = value;
+        this.saveSolanaRpcConfig();
+        return true;
+    }
+
+    // 🔵 APTOS RPC CONFIGURATION SYSTEM
+    loadAptosRpcConfig() {
+        try {
+            if (fs.existsSync(this.aptosRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.aptosRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentAptosRpc = rpcConfig.currentRpc || null;
+                    this.currentAptosRpcName = rpcConfig.currentRpcName || null;
+                    this.savedAptosRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC Aptos tidak ditemukan, membuat default...`);
+                this.savedAptosRpcs = {};
+                this.currentAptosRpc = null;
+                this.currentAptosRpcName = null;
+                this.saveAptosRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading Aptos RPC config:`, error.message);
+        }
+    }
+
+    saveAptosRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentAptosRpc,
+                currentRpcName: this.currentAptosRpcName,
+                savedRpcs: this.savedAptosRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.aptosRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] Aptos RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving Aptos RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addAptosRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `aptos_${Date.now()}`;
+        this.savedAptosRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentAptosRpc) {
+            this.currentAptosRpc = rpcUrl;
+            this.currentAptosRpcName = name;
+        }
+        this.saveAptosRpcConfig();
+        return key;
+    }
+
+    deleteAptosRpc(key) {
+        if (!this.savedAptosRpcs[key]) return false;
+        const targetRpc = this.savedAptosRpcs[key].rpc;
+        delete this.savedAptosRpcs[key];
+
+        if (this.currentAptosRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedAptosRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentAptosRpc = this.savedAptosRpcs[nextKey].rpc;
+                this.currentAptosRpcName = this.savedAptosRpcs[nextKey].name;
+            } else {
+                this.currentAptosRpc = null;
+                this.currentAptosRpcName = null;
+            }
+        }
+        this.saveAptosRpcConfig();
+        return true;
+    }
+
+    selectAptosRpc(key) {
+        if (!this.savedAptosRpcs[key]) return false;
+        const selected = this.savedAptosRpcs[key];
+        this.currentAptosRpc = selected.rpc;
+        this.currentAptosRpcName = selected.name;
+        this.saveAptosRpcConfig();
+        return true;
+    }
+
+    updateAptosRpcProperty(key, property, value) {
+        if (!this.savedAptosRpcs[key]) return false;
+        this.savedAptosRpcs[key][property] = value;
+        this.saveAptosRpcConfig();
+        return true;
+    }
+
+    // 🟡 SUI RPC CONFIGURATION SYSTEM
+    loadSuiRpcConfig() {
+        try {
+            if (fs.existsSync(this.suiRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.suiRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentSuiRpc = rpcConfig.currentRpc || null;
+                    this.currentSuiRpcName = rpcConfig.currentRpcName || null;
+                    this.savedSuiRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC Sui tidak ditemukan, membuat default...`);
+                this.savedSuiRpcs = {};
+                this.currentSuiRpc = null;
+                this.currentSuiRpcName = null;
+                this.saveSuiRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading Sui RPC config:`, error.message);
+        }
+    }
+
+    saveSuiRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentSuiRpc,
+                currentRpcName: this.currentSuiRpcName,
+                savedRpcs: this.savedSuiRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.suiRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] Sui RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving Sui RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addSuiRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `sui_${Date.now()}`;
+        this.savedSuiRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentSuiRpc) {
+            this.currentSuiRpc = rpcUrl;
+            this.currentSuiRpcName = name;
+        }
+        this.saveSuiRpcConfig();
+        return key;
+    }
+
+    deleteSuiRpc(key) {
+        if (!this.savedSuiRpcs[key]) return false;
+        const targetRpc = this.savedSuiRpcs[key].rpc;
+        delete this.savedSuiRpcs[key];
+
+        if (this.currentSuiRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedSuiRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentSuiRpc = this.savedSuiRpcs[nextKey].rpc;
+                this.currentSuiRpcName = this.savedSuiRpcs[nextKey].name;
+            } else {
+                this.currentSuiRpc = null;
+                this.currentSuiRpcName = null;
+            }
+        }
+        this.saveSuiRpcConfig();
+        return true;
+    }
+
+    selectSuiRpc(key) {
+        if (!this.savedSuiRpcs[key]) return false;
+        const selected = this.savedSuiRpcs[key];
+        this.currentSuiRpc = selected.rpc;
+        this.currentSuiRpcName = selected.name;
+        this.saveSuiRpcConfig();
+        return true;
+    }
+
+    updateSuiRpcProperty(key, property, value) {
+        if (!this.savedSuiRpcs[key]) return false;
+        this.savedSuiRpcs[key][property] = value;
+        this.saveSuiRpcConfig();
+        return true;
+    }
+
+    // 💎 TON RPC CONFIGURATION SYSTEM
+    loadTonRpcConfig() {
+        try {
+            if (fs.existsSync(this.tonRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.tonRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentTonRpc = rpcConfig.currentRpc || null;
+                    this.currentTonRpcName = rpcConfig.currentRpcName || null;
+                    this.savedTonRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC TON tidak ditemukan, membuat default...`);
+                this.savedTonRpcs = {};
+                this.currentTonRpc = null;
+                this.currentTonRpcName = null;
+                this.saveTonRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading TON RPC config:`, error.message);
+        }
+    }
+
+    saveTonRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentTonRpc,
+                currentRpcName: this.currentTonRpcName,
+                savedRpcs: this.savedTonRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.tonRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] TON RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving TON RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addTonRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `ton_${Date.now()}`;
+        this.savedTonRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentTonRpc) {
+            this.currentTonRpc = rpcUrl;
+            this.currentTonRpcName = name;
+        }
+        this.saveTonRpcConfig();
+        return key;
+    }
+
+    deleteTonRpc(key) {
+        if (!this.savedTonRpcs[key]) return false;
+        const targetRpc = this.savedTonRpcs[key].rpc;
+        delete this.savedTonRpcs[key];
+
+        if (this.currentTonRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedTonRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentTonRpc = this.savedTonRpcs[nextKey].rpc;
+                this.currentTonRpcName = this.savedTonRpcs[nextKey].name;
+            } else {
+                this.currentTonRpc = null;
+                this.currentTonRpcName = null;
+            }
+        }
+        this.saveTonRpcConfig();
+        return true;
+    }
+
+    selectTonRpc(key) {
+        if (!this.savedTonRpcs[key]) return false;
+        const selected = this.savedTonRpcs[key];
+        this.currentTonRpc = selected.rpc;
+        this.currentTonRpcName = selected.name;
+        this.saveTonRpcConfig();
+        return true;
+    }
+
+    updateTonRpcProperty(key, property, value) {
+        if (!this.savedTonRpcs[key]) return false;
+        this.savedTonRpcs[key][property] = value;
+        this.saveTonRpcConfig();
+        return true;
+    }
+
+    // 🌿 NEAR RPC CONFIGURATION SYSTEM
+    loadNearRpcConfig() {
+        try {
+            if (fs.existsSync(this.nearRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.nearRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentNearRpc = rpcConfig.currentRpc || null;
+                    this.currentNearRpcName = rpcConfig.currentRpcName || null;
+                    this.savedNearRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC NEAR tidak ditemukan, membuat default...`);
+                this.savedNearRpcs = {};
+                this.currentNearRpc = null;
+                this.currentNearRpcName = null;
+                this.saveNearRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading NEAR RPC config:`, error.message);
+        }
+    }
+
+    saveNearRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentNearRpc,
+                currentRpcName: this.currentNearRpcName,
+                savedRpcs: this.savedNearRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.nearRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] NEAR RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving NEAR RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addNearRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `near_${Date.now()}`;
+        this.savedNearRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentNearRpc) {
+            this.currentNearRpc = rpcUrl;
+            this.currentNearRpcName = name;
+        }
+        this.saveNearRpcConfig();
+        return key;
+    }
+
+    deleteNearRpc(key) {
+        if (!this.savedNearRpcs[key]) return false;
+        const targetRpc = this.savedNearRpcs[key].rpc;
+        delete this.savedNearRpcs[key];
+
+        if (this.currentNearRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedNearRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentNearRpc = this.savedNearRpcs[nextKey].rpc;
+                this.currentNearRpcName = this.savedNearRpcs[nextKey].name;
+            } else {
+                this.currentNearRpc = null;
+                this.currentNearRpcName = null;
+            }
+        }
+        this.saveNearRpcConfig();
+        return true;
+    }
+
+    selectNearRpc(key) {
+        if (!this.savedNearRpcs[key]) return false;
+        const selected = this.savedNearRpcs[key];
+        this.currentNearRpc = selected.rpc;
+        this.currentNearRpcName = selected.name;
+        this.saveNearRpcConfig();
+        return true;
+    }
+
+    updateNearRpcProperty(key, property, value) {
+        if (!this.savedNearRpcs[key]) return false;
+        this.savedNearRpcs[key][property] = value;
+        this.saveNearRpcConfig();
+        return true;
     }
 
     setupProvider() {
@@ -226,7 +821,7 @@ class CryptoAutoTx {
     async runWithFailover(fn) {
         let attempts = 0;
         let maxAttempts = 1;
-        
+
         let activeRpcConfig = null;
         for (const key in this.savedRpcs) {
             const rpc = this.savedRpcs[key];
@@ -243,16 +838,16 @@ class CryptoAutoTx {
             try {
                 return await fn();
             } catch (error) {
-                const isNetworkError = error.message.includes('fetch') || 
-                                       error.message.includes('timeout') || 
-                                       error.message.includes('SERVER_ERROR') || 
-                                       error.message.includes('502') || 
-                                       error.message.includes('503') ||
-                                       error.message.includes('504') ||
-                                       error.message.includes('bad response') ||
-                                       error.message.includes('could not detect network') ||
-                                       error.code === 'TIMEOUT' ||
-                                       error.code === 'SERVER_ERROR';
+                const isNetworkError = error.message.includes('fetch') ||
+                    error.message.includes('timeout') ||
+                    error.message.includes('SERVER_ERROR') ||
+                    error.message.includes('502') ||
+                    error.message.includes('503') ||
+                    error.message.includes('504') ||
+                    error.message.includes('bad response') ||
+                    error.message.includes('could not detect network') ||
+                    error.code === 'TIMEOUT' ||
+                    error.code === 'SERVER_ERROR';
 
                 if (isNetworkError) {
                     console.log(`[Session ${this.sessionId}] Network error detected on ${this.currentRpc}: ${error.message}`);
@@ -273,7 +868,7 @@ class CryptoAutoTx {
 
     async switchToNextBackupRpc() {
         if (!this.savedRpcs) return false;
-        
+
         let activeRpcConfig = null;
         for (const key in this.savedRpcs) {
             const rpc = this.savedRpcs[key];
@@ -300,7 +895,7 @@ class CryptoAutoTx {
         const nextUrl = allUrls[nextIndex];
 
         console.log(`[Session ${this.sessionId}] Switching from ${this.currentRpc} to backup URL: ${nextUrl}`);
-        
+
         this.currentRpc = nextUrl;
         this.setupProvider();
 
@@ -480,6 +1075,23 @@ class CryptoAutoTx {
     }
 
     // 🔐 ENCRYPTION SYSTEM
+    ensureMasterKey() {
+        if (this.masterKey) return;
+        const keyFile = path.join(this.dataDir, `${this.sessionId}_master.key`);
+        try {
+            if (fs.existsSync(keyFile)) {
+                const keyBase64 = fs.readFileSync(keyFile, 'utf8');
+                this.masterKey = Buffer.from(keyBase64, 'base64');
+            } else {
+                this.masterKey = crypto.randomBytes(32);
+                fs.writeFileSync(keyFile, this.masterKey.toString('base64'));
+                try { fs.chmodSync(keyFile, 0o600); } catch (error) { }
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error ensuring encryption key:`, error.message);
+        }
+    }
+
     async initializeEncryption() {
         const keyFile = path.join(this.dataDir, `${this.sessionId}_master.key`);
         try {
@@ -693,6 +1305,75 @@ class CryptoAutoTx {
         } catch (error) {
             console.log(`[Session ${this.sessionId}] ❌ Error saving wallet:`, error.message);
             return false;
+        }
+    }
+
+    deriveSolanaAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const m = ethers.Mnemonic.fromPhrase(mnemonic);
+            const seedHex = m.computeSeed().slice(2);
+            const derived = derivePath("m/44'/501'/0'/0'", seedHex);
+            const keypair = Keypair.fromSeed(derived.key);
+            return keypair.publicKey.toBase58();
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving Solana address:`, error.message);
+            return null;
+        }
+    }
+
+    deriveAptosAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const account = AptosAccount.fromDerivationPath({
+                path: "m/44'/637'/0'/0'/0'",
+                mnemonic: mnemonic,
+            });
+            return account.accountAddress.toString();
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving Aptos address:`, error.message);
+            return null;
+        }
+    }
+
+    deriveSuiAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const keypair = Ed25519Keypair.deriveKeypair(mnemonic, "m/44'/784'/0'/0'/0'");
+            return keypair.toSuiAddress();
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving Sui address:`, error.message);
+            return null;
+        }
+    }
+
+    async deriveTonAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const key = await mnemonicToWalletKey(mnemonic.split(' '));
+            const wallet = WalletContractV4.create({
+                workchain: 0,
+                publicKey: key.publicKey
+            });
+            return wallet.address.toString({ bounceable: false, testOnly: false });
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving TON address:`, error.message);
+            return null;
+        }
+    }
+
+    deriveNearAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const bip39 = require('bip39');
+            const nacl = require('tweetnacl');
+            const seed = bip39.mnemonicToSeedSync(mnemonic);
+            const { key } = derivePath("m/44'/397'/0'", seed.toString('hex'));
+            const keyPair = nacl.sign.keyPair.fromSeed(key);
+            return Buffer.from(keyPair.publicKey).toString('hex');
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving NEAR address:`, error.message);
+            return null;
         }
     }
 
@@ -1172,7 +1853,19 @@ class CryptoAutoTx {
         };
         try {
             if (fs.existsSync(this.rpcPortsFile)) {
-                const saved = JSON.parse(fs.readFileSync(this.rpcPortsFile, 'utf8'));
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.rpcPortsFile, 'utf8');
+                let saved;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        saved = this.decrypt(parsed);
+                    } else {
+                        saved = parsed;
+                    }
+                } catch (e) {
+                    saved = JSON.parse(raw);
+                }
                 // Merge: pastikan port permanen selalu ada
                 return Object.assign({}, defaults, saved,
                     {
@@ -1189,7 +1882,9 @@ class CryptoAutoTx {
 
     _saveRpcPortsConfig() {
         try {
-            fs.writeFileSync(this.rpcPortsFile, JSON.stringify(this.rpcPortsConfig, null, 2));
+            this.ensureMasterKey();
+            const encryptedData = this.encrypt(this.rpcPortsConfig);
+            fs.writeFileSync(this.rpcPortsFile, JSON.stringify(encryptedData, null, 2));
         } catch (e) {
             console.warn(`[RPC Ports] Gagal simpan config port: ${e.message}`);
         }
@@ -1641,7 +2336,7 @@ class CryptoAutoTx {
                                 message_id: details._messageId,
                                 parse_mode: 'Markdown'
                             }
-                        ).catch(() => {});
+                        ).catch(() => { });
                     }
 
                     reject(new Error('DApp connection request timed out (60s)'));
@@ -1730,7 +2425,7 @@ class CryptoAutoTx {
                         message_id: details._messageId,
                         parse_mode: 'Markdown'
                     }
-                ).catch(() => {});
+                ).catch(() => { });
             }
 
             pending.resolve(true);
@@ -1754,11 +2449,277 @@ class CryptoAutoTx {
                         message_id: details._messageId,
                         parse_mode: 'Markdown'
                     }
-                ).catch(() => {});
+                ).catch(() => { });
             }
 
             pending.reject(new Error('DApp connection rejected by user'));
             return { ok: true, msg: 'DApp connection rejected.' };
+        }
+    }
+
+    /**
+     * Request manual transaction/signing approval from user via Telegram.
+     */
+    requestTxApproval(method, params, requestOrigin = null) {
+        return new Promise(async (resolve, reject) => {
+            // Safety fallback: if bot or chatId is not available, auto-approve
+            if (!this.bot || !this.sessionNotificationChatId) {
+                console.log(`[Session ${this.sessionId}] ⚠️ Tx Approval: No Telegram session, auto-approving...`);
+                resolve(true);
+                return;
+            }
+
+            const approvalId = `tx_${Date.now()}_${++this._txApprovalCounter}`;
+
+            // Timeout 120s
+            const timer = setTimeout(() => {
+                const pending = this.pendingTxApprovals.get(approvalId);
+                if (pending) {
+                    this.pendingTxApprovals.delete(approvalId);
+                    console.log(`[Session ${this.sessionId}] ⏰ Tx Approval TIMEOUT: ${approvalId}`);
+
+                    if (pending.messageId && this.bot && this.sessionNotificationChatId) {
+                        this.bot.editMessageText(
+                            `⏰ *TRANSACTION TIMEOUT*\n\n` +
+                            `❌ Transaksi ditolak otomatis karena tidak ada respons dalam 120 detik.`,
+                            {
+                                chat_id: this.sessionNotificationChatId,
+                                message_id: pending.messageId,
+                                parse_mode: 'Markdown'
+                            }
+                        ).catch(() => { });
+                    }
+
+                    reject(new Error('User rejected the transaction: timeout (120s)'));
+                }
+            }, 120000);
+
+            const approvalState = {
+                resolve,
+                reject,
+                timer,
+                method,
+                params,
+                requestOrigin,
+                createdAt: Date.now(),
+                messageId: null
+            };
+            this.pendingTxApprovals.set(approvalId, approvalState);
+
+            let detailText = '';
+            if (method === 'eth_sendTransaction' || method === 'eth_signTransaction') {
+                const tx = params[0] || {};
+                const to = tx.to || 'None/Contract Creation';
+                let valueEth = '0';
+                try {
+                    const val = tx.value ? BigInt(tx.value) : 0n;
+                    valueEth = ethers.formatEther(val);
+                } catch (e) { }
+
+                const data = tx.data || '0x';
+                const gasLimit = tx.gasLimit || tx.gas || 'Auto';
+                const gasPrice = tx.gasPrice ? `${ethers.formatUnits(tx.gasPrice, 'gwei')} Gwei` : 'Auto';
+
+                let isTokenTransfer = false;
+                let tokenTarget = '';
+                let tokenAmount = '';
+                if (data.startsWith('0xa9059cbb') && data.length >= 138) {
+                    isTokenTransfer = true;
+                    try {
+                        const targetAddr = '0x' + data.substring(34, 74);
+                        const rawAmount = '0x' + data.substring(74, 138);
+                        tokenTarget = ethers.getAddress(targetAddr);
+                        tokenAmount = BigInt(rawAmount).toString();
+                    } catch (e) {
+                        isTokenTransfer = false;
+                    }
+                }
+
+                let isTokenApprove = false;
+                let approveSpender = '';
+                let approveAmount = '';
+                if (data.startsWith('0x095ea7b3') && data.length >= 138) {
+                    isTokenApprove = true;
+                    try {
+                        const spenderAddr = '0x' + data.substring(34, 74);
+                        const rawAmount = '0x' + data.substring(74, 138);
+                        approveSpender = ethers.getAddress(spenderAddr);
+                        approveAmount = BigInt(rawAmount).toString();
+                    } catch (e) {
+                        isTokenApprove = false;
+                    }
+                }
+
+                detailText = `📝 *Tipe:* ${method === 'eth_sendTransaction' ? 'Kirim Transaksi' : 'Tanda Tangan Transaksi'}\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain ID:* \`${this.currentChainId}\`\n` +
+                    `🌐 *RPC:* \`${this._escapeMarkdown(this.currentRpcName || 'Unknown')}\`\n` +
+                    `💳 *Dari:* \`${this.wallet?.address || 'N/A'}\`\n` +
+                    `🎯 *Kepada:* \`${to}\`\n` +
+                    `💰 *Nilai:* \`${valueEth} Native Token\`\n`;
+
+                if (isTokenTransfer) {
+                    detailText += `🪙 *Transfer Token Terdeteksi:*\n` +
+                        `  👉 *Ke:* \`${tokenTarget}\`\n` +
+                        `  👉 *Jumlah (Raw):* \`${tokenAmount}\`\n`;
+                }
+
+                if (isTokenApprove) {
+                    detailText += `🔑 *Approve Token Terdeteksi:*\n` +
+                        `  👉 *Spender:* \`${approveSpender}\`\n` +
+                        `  👉 *Jumlah (Raw):* \`${approveAmount}\`\n`;
+                }
+
+                detailText += `⛽ *Gas Limit:* \`${gasLimit}\`\n` +
+                    `⛽ *Gas Price:* \`${gasPrice}\`\n` +
+                    `💾 *Data Hex:* \`${data.length > 100 ? data.substring(0, 100) + '...' : data}\` (${(data.length - 2) / 2} bytes)`;
+
+            } else if (method === 'personal_sign' || method === 'eth_sign') {
+                const messageHex = method === 'personal_sign' ? params[0] : params[1];
+                let decodedMessage = '';
+                if (ethers.isHexString(messageHex)) {
+                    try {
+                        decodedMessage = ethers.toUtf8String(messageHex);
+                    } catch (e) {
+                        decodedMessage = messageHex;
+                    }
+                } else {
+                    decodedMessage = messageHex;
+                }
+
+                // Hindari crash jika pesan dari DApp mengandung triple backticks
+                const safeMessage = decodedMessage.replace(/```/g, "'''");
+
+                detailText = `📝 *Tipe:* Tanda Tangan Pesan (\`${method}\`)\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain ID:* \`${this.currentChainId}\`\n` +
+                    `💳 *Wallet:* \`${this.wallet?.address || 'N/A'}\`\n` +
+                    `💬 *Pesan:* \n\`\`\`\n${safeMessage}\n\`\`\``;
+
+            } else if (method === 'eth_signTypedData' || method === 'eth_signTypedData_v4') {
+                const rawTypedData = params[1];
+                let typedDataStr = '';
+                try {
+                    if (typeof rawTypedData === 'string') {
+                        typedDataStr = JSON.stringify(JSON.parse(rawTypedData), null, 2);
+                    } else {
+                        typedDataStr = JSON.stringify(rawTypedData, null, 2);
+                    }
+                } catch (e) {
+                    typedDataStr = String(rawTypedData);
+                }
+
+                detailText = `📝 *Tipe:* Tanda Tangan Typed Data (EIP-712)\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain ID:* \`${this.currentChainId}\`\n` +
+                    `💳 *Wallet:* \`${this.wallet?.address || 'N/A'}\`\n` +
+                    `📊 *Data:* \n\`\`\`json\n${typedDataStr.length > 500 ? typedDataStr.substring(0, 500) + '\n... (data terlalu panjang)' : typedDataStr}\n\`\`\``;
+
+            } else if (method === 'solana_signTransaction') {
+                const txHex = params[0] || '';
+                const solAddress = (await this.getActiveSolanaAddress()) || 'N/A';
+                detailText = `🟣 *Tipe:* Solana Sign Transaction\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain:* Solana\n` +
+                    `🌐 *RPC:* \`${this._escapeMarkdown(this.currentSolanaRpcName || 'Default')}\`\n` +
+                    `💳 *Wallet:* \`${solAddress}\`\n` +
+                    `💾 *Data Hex:* \`${txHex.length > 100 ? txHex.substring(0, 100) + '...' : txHex}\` (${Math.floor(txHex.length / 2)} bytes)`;
+
+            } else if (method === 'solana_signMessage') {
+                const messageHex = params[0] || '';
+                const solAddress = (await this.getActiveSolanaAddress()) || 'N/A';
+                let decodedMessage = '';
+                try {
+                    decodedMessage = Buffer.from(messageHex, 'hex').toString('utf8');
+                } catch (e) {
+                    decodedMessage = messageHex;
+                }
+                const safeMessage = decodedMessage.replace(/```/g, "'''");
+                detailText = `🟣 *Tipe:* Solana Sign Message\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain:* Solana\n` +
+                    `💳 *Wallet:* \`${solAddress}\`\n` +
+                    `💬 *Pesan:* \n\`\`\`\n${safeMessage}\n\`\`\``;
+
+            } else {
+                detailText = `📝 *Tipe:* \`${method}\`\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain ID:* \`${this.currentChainId}\`\n` +
+                    `📋 *Params:* \n\`\`\`json\n${JSON.stringify(params, null, 2)}\n\`\`\``;
+            }
+
+            const message = `⚠️ *PERMINTAAN KONFIRMASI TRANSAKSI*\n\n` +
+                `${detailText}\n\n` +
+                `⏳ _Auto-reject dalam 120 detik jika tidak ada respons._`;
+
+            this.bot.sendMessage(this.sessionNotificationChatId, message, {
+                parse_mode: 'Markdown',
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: '✅ Accept', callback_data: `tx_approve_${approvalId}` },
+                            { text: '❌ Reject', callback_data: `tx_reject_${approvalId}` }
+                        ]
+                    ]
+                }
+            }).then(sentMsg => {
+                const currentPending = this.pendingTxApprovals.get(approvalId);
+                if (currentPending) {
+                    currentPending.messageId = sentMsg.message_id;
+                }
+            }).catch(err => {
+                console.warn(`[Session ${this.sessionId}] ⚠️ Tx Approval: Telegram send error:`, err.message);
+                this.pendingTxApprovals.delete(approvalId);
+                clearTimeout(timer);
+                resolve(false); // FAIL-SAFE: Tolak transaksi jika gagal kirim notifikasi
+            });
+        });
+    }
+
+    /**
+     * Resolve/Reject manual transaction approval.
+     */
+    resolveTxApproval(approvalId, approved) {
+        const pending = this.pendingTxApprovals.get(approvalId);
+        if (!pending) {
+            return { ok: false, msg: 'Permintaan sudah expired atau tidak ditemukan.' };
+        }
+
+        clearTimeout(pending.timer);
+        this.pendingTxApprovals.delete(approvalId);
+
+        if (approved) {
+            console.log(`[Session ${this.sessionId}] ✅ Transaction APPROVED: ${pending.method}`);
+            if (pending.messageId && this.bot && this.sessionNotificationChatId) {
+                this.bot.editMessageText(
+                    `✅ *TRANSAKSI DISETUJUI*\n\n` +
+                    `Tipe: \`${pending.method}\`\n` +
+                    `Status: Disetujui oleh user dan sedang dieksekusi...`,
+                    {
+                        chat_id: this.sessionNotificationChatId,
+                        message_id: pending.messageId,
+                        parse_mode: 'Markdown'
+                    }
+                ).catch(() => { });
+            }
+            pending.resolve(true);
+            return { ok: true, msg: 'Transaction approved.' };
+        } else {
+            console.log(`[Session ${this.sessionId}] ❌ Transaction REJECTED: ${pending.method}`);
+            if (pending.messageId && this.bot && this.sessionNotificationChatId) {
+                this.bot.editMessageText(
+                    `❌ *TRANSAKSI DITOLAK*\n\n` +
+                    `Tipe: \`${pending.method}\`\n` +
+                    `Status: Ditolak oleh user`,
+                    {
+                        chat_id: this.sessionNotificationChatId,
+                        message_id: pending.messageId,
+                        parse_mode: 'Markdown'
+                    }
+                ).catch(() => { });
+            }
+            pending.reject(new Error('User rejected the transaction'));
+            return { ok: true, msg: 'Transaction rejected.' };
         }
     }
 
@@ -1803,7 +2764,7 @@ class CryptoAutoTx {
                         this.signClient.disconnect({
                             topic: wcSession.topic,
                             reason: { code: 6000, message: 'User disconnected' }
-                        }).catch(() => {});
+                        }).catch(() => { });
                     }
                 } catch (err) {
                     console.log(`[Session ${this.sessionId}] Error disconnecting WC session:`, err.message);
@@ -1811,7 +2772,7 @@ class CryptoAutoTx {
             }
             this.connectedDapps = this.connectedDapps.filter(d => d.id !== id);
             this.saveRpcConfig();
-            
+
             // Bersihkan tracker aktivitas jika ada
             const normUrl = dapp.url.trim().replace(/\/$/, '');
             if (this.dappLastActiveTimes) {
@@ -1866,7 +2827,7 @@ class CryptoAutoTx {
 
         for (const dapp of dappsToDisconnect) {
             console.log(`[Session ${this.sessionId}] Auto-disconnecting DApp due to inactivity: ${dapp.name} (${dapp.url})`);
-            
+
             this.removeConnectedDapp(dapp.id);
 
             if (this.bot && this.sessionNotificationChatId) {
@@ -1912,11 +2873,36 @@ class CryptoAutoTx {
             `💳 *Wallet:* \`${details.walletAddress || this.wallet?.address || 'N/A'}\`\n` +
             `📡 *Via:* ${details.via || 'Unknown'}\n` +
             `🕒 *Waktu:* ${new Date().toLocaleString()}\n\n` +
-            `_DApp Approval Mode: OFF (Auto-Connect)_`;
+            `_DApp Connection: Auto-Connect (RPC Auto)_`;
 
         this.bot.sendMessage(this.sessionNotificationChatId, message, {
             parse_mode: 'Markdown'
         }).catch(err => console.warn(`[Telegram] DApp notify error: ${err.message}`));
+    }
+
+    /**
+     * [v20.1] Cek apakah Auto Approve Tx aktif untuk RPC yang sedang digunakan.
+     * Membaca properti autoApprove dari objek RPC yang sedang aktif di savedRpcs.
+     * Default: true (auto) jika properti tidak ditemukan.
+     */
+    isAutoApproveActive() {
+        if (!this.savedRpcs || !this.currentRpc) return true;
+        for (const key in this.savedRpcs) {
+            if (this.savedRpcs[key].rpc === this.currentRpc) {
+                return this.savedRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * [v20.2] Cek apakah DApp connection approval diperlukan.
+     * - globalDappApproval ON  → selalu minta konfirmasi (tidak tergantung RPC)
+     * - globalDappApproval OFF → ikut setting Auto Approve per RPC aktif
+     */
+    isDappConnectionApprovalRequired() {
+        if (this.globalDappApproval) return true;
+        return !this.isAutoApproveActive();
     }
 
     /**
@@ -1943,11 +2929,13 @@ class CryptoAutoTx {
                 via: 'WalletConnect'
             };
 
-            // [v19.2] DApp Approval Check
+            // [v20.2] DApp Approval Check — gunakan isDappConnectionApprovalRequired()
             const isConnected = this.isDappConnected(dappDetails.dappUrl);
+            const dappApprovalRequired = this.isDappConnectionApprovalRequired();
 
-            if (this.dappApprovalRequired && !isConnected) {
-                console.log(`[Session ${this.sessionId}] 🔐 DApp Approval ON — menunggu persetujuan user...`);
+            if (dappApprovalRequired && !isConnected) {
+                const approvalSource = this.globalDappApproval ? 'Global ON' : 'Manual RPC';
+                console.log(`[Session ${this.sessionId}] 🔐 DApp Approval ON (${approvalSource}) — menunggu persetujuan user...`);
                 try {
                     await this.requestDappApproval(dappDetails);
                     console.log(`[Session ${this.sessionId}] ✅ DApp disetujui oleh user.`);
@@ -2066,15 +3054,17 @@ class CryptoAutoTx {
             console.log(`[Session ${this.sessionId}] Method:`, method);
             console.log(`[Session ${this.sessionId}] Topic:`, topic);
 
+            let requestOrigin = null;
             // Reset inactivity timer untuk WalletConnect DApp
             if (this.signClient && topic) {
                 try {
                     const session = this.signClient.session.get(topic);
                     const url = session?.peer?.metadata?.url;
                     if (url) {
+                        requestOrigin = url;
                         this.updateDappActivity(url);
                     }
-                } catch (err) {}
+                } catch (err) { }
             }
 
             if (!topic) throw new Error('Topic tidak ditemukan dalam request');
@@ -2086,30 +3076,30 @@ class CryptoAutoTx {
                 case 'eth_sendTransaction':
                     console.log(`[Session ${this.sessionId}] Transaction params:`,
                         JSON.stringify(this.bigIntToString(params.request.params[0]), null, 2));
-                    result = await this.handleSendTransaction(params.request.params[0]);
+                    result = await this.handleSendTransaction(params.request.params[0], requestOrigin);
                     break;
 
                 case 'eth_signTransaction':
                     console.log(`[Session ${this.sessionId}] Sign transaction params:`,
                         JSON.stringify(this.bigIntToString(params.request.params[0]), null, 2));
-                    result = await this.handleSignTransaction(params.request.params[0]);
+                    result = await this.handleSignTransaction(params.request.params[0], requestOrigin);
                     break;
 
                 case 'personal_sign':
                     console.log(`[Session ${this.sessionId}] Personal sign params:`, params.request.params);
-                    result = await this.handlePersonalSign(params.request.params);
+                    result = await this.handlePersonalSign(params.request.params, requestOrigin);
                     break;
 
                 case 'eth_sign':
                     console.log(`[Session ${this.sessionId}] Eth sign params:`, params.request.params);
-                    result = await this.handleEthSign(params.request.params);
+                    result = await this.handleEthSign(params.request.params, requestOrigin);
                     break;
 
                 case 'eth_signTypedData':
                 case 'eth_signTypedData_v4':
                     console.log(`[Session ${this.sessionId}] Typed data params:`,
                         JSON.stringify(this.bigIntToString(params.request.params[1]), null, 2));
-                    result = await this.handleSignTypedData(params.request.params);
+                    result = await this.handleSignTypedData(params.request.params, requestOrigin);
                     break;
 
                 case 'wallet_addEthereumChain':
@@ -2191,8 +3181,14 @@ class CryptoAutoTx {
         }
     }
 
-    async handleSendTransaction(txParams) {
+    async handleSendTransaction(txParams, requestOrigin = null) {
         if (!this.wallet) throw new Error('Wallet belum aktif');
+        if (!this.isAutoApproveActive()) {
+            const approved = await this.requestTxApproval('eth_sendTransaction', [txParams], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
         const walletAddress = this.wallet.address;
         const chainId = this.currentChainId;
         if (globalTxQueue.isQueued(walletAddress, chainId)) {
@@ -2349,7 +3345,14 @@ class CryptoAutoTx {
         }
     }
 
-    async handleSignTransaction(txParams) {
+    async handleSignTransaction(txParams, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        if (!this.isAutoApproveActive()) {
+            const approved = await this.requestTxApproval('eth_signTransaction', [txParams], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
         console.log(`[Session ${this.sessionId}] Handling sign transaction...`);
         const safeTxParams = { ...txParams };
         if (!safeTxParams.chainId) safeTxParams.chainId = this.currentChainId;
@@ -2364,7 +3367,14 @@ class CryptoAutoTx {
         return signedTx;
     }
 
-    async handlePersonalSign(params) {
+    async handlePersonalSign(params, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        if (!this.isAutoApproveActive()) {
+            const approved = await this.requestTxApproval('personal_sign', params, requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
         console.log(`[Session ${this.sessionId}] Handling personal sign...`);
         const messageHex = params[0];
         const address = params[1];
@@ -2954,7 +3964,14 @@ class CryptoAutoTx {
         }
     }
 
-    async handleEthSign(params) {
+    async handleEthSign(params, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        if (!this.isAutoApproveActive()) {
+            const approved = await this.requestTxApproval('eth_sign', params, requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
         console.log(`[Session ${this.sessionId}] Handling eth_sign...`);
         // eth_sign: params[0] = address, params[1] = message hex
         const messageHex = params[1];
@@ -2963,7 +3980,14 @@ class CryptoAutoTx {
         return signedMessage;
     }
 
-    async handleSignTypedData(params) {
+    async handleSignTypedData(params, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        if (!this.isAutoApproveActive()) {
+            const approved = await this.requestTxApproval('eth_signTypedData', params, requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
         console.log(`[Session ${this.sessionId}] Handling eth_signTypedData...`);
         // params[0] = address, params[1] = typed data JSON string or object
         let typedData = params[1];
@@ -2977,6 +4001,420 @@ class CryptoAutoTx {
         const signedData = await this.wallet.signTypedData(domain, filteredTypes, message);
         console.log(`[Session ${this.sessionId}] eth_signTypedData completed`);
         return signedData;
+    }
+
+    async getActiveSolanaAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveSolanaAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSolanaAddress:`, error.message);
+            return null;
+        }
+    }
+
+    async getActiveSolanaKeypair() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+
+            const m = ethers.Mnemonic.fromPhrase(walletData.mnemonic);
+            const seedHex = m.computeSeed().slice(2);
+            const derived = derivePath("m/44'/501'/0'/0'", seedHex);
+            return Keypair.fromSeed(derived.key);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSolanaKeypair:`, error.message);
+            return null;
+        }
+    }
+
+    isSolanaAutoApproveActive() {
+        if (!this.savedSolanaRpcs || !this.currentSolanaRpc) return true;
+        for (const key in this.savedSolanaRpcs) {
+            if (this.savedSolanaRpcs[key].rpc === this.currentSolanaRpc) {
+                return this.savedSolanaRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveAptosAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveAptosAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveAptosAddress:`, error.message);
+            return null;
+        }
+    }
+
+    isAptosAutoApproveActive() {
+        if (!this.savedAptosRpcs || !this.currentAptosRpc) return true;
+        for (const key in this.savedAptosRpcs) {
+            if (this.savedAptosRpcs[key].rpc === this.currentAptosRpc) {
+                return this.savedAptosRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveSuiAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveSuiAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSuiAddress:`, error.message);
+            return null;
+        }
+    }
+
+    async getActiveSuiKeypair() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return Ed25519Keypair.deriveKeypair(walletData.mnemonic, "m/44'/784'/0'/0'/0'");
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSuiKeypair:`, error.message);
+            return null;
+        }
+    }
+
+    isSuiAutoApproveActive() {
+        if (!this.savedSuiRpcs || !this.currentSuiRpc) return true;
+        for (const key in this.savedSuiRpcs) {
+            if (this.savedSuiRpcs[key].rpc === this.currentSuiRpc) {
+                return this.savedSuiRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveTonAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return await this.deriveTonAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveTonAddress:`, error.message);
+            return null;
+        }
+    }
+
+    isTonAutoApproveActive() {
+        if (!this.savedTonRpcs || !this.currentTonRpc) return true;
+        for (const key in this.savedTonRpcs) {
+            if (this.savedTonRpcs[key].rpc === this.currentTonRpc) {
+                return this.savedTonRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveNearAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveNearAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveNearAddress:`, error.message);
+            return null;
+        }
+    }
+
+    isNearAutoApproveActive() {
+        if (!this.savedNearRpcs || !this.currentNearRpc) return true;
+        for (const key in this.savedNearRpcs) {
+            if (this.savedNearRpcs[key].rpc === this.currentNearRpc) {
+                return this.savedNearRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async handleSolanaSignTransaction(txHex, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        const keypair = await this.getActiveSolanaKeypair();
+        if (!keypair) throw new Error('Solana wallet tidak tersedia (diimpor via Private Key)');
+
+        if (!this.isSolanaAutoApproveActive()) {
+            const approved = await this.requestTxApproval('solana_signTransaction', [txHex], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling solana_signTransaction...`);
+        const txBuf = Buffer.from(txHex, 'hex');
+        let tx;
+        let isVersioned = false;
+        try {
+            tx = VersionedTransaction.deserialize(txBuf);
+            isVersioned = true;
+        } catch (e) {
+            tx = Transaction.from(txBuf);
+        }
+
+        if (isVersioned) {
+            tx.sign([keypair]);
+        } else {
+            tx.sign(keypair);
+        }
+
+        const signedTxHex = Buffer.from(tx.serialize()).toString('hex');
+        console.log(`[Session ${this.sessionId}] solana_signTransaction completed`);
+        return { signedTxHex };
+    }
+
+    async handleSolanaSignMessage(messageHex, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        const keypair = await this.getActiveSolanaKeypair();
+        if (!keypair) throw new Error('Solana wallet tidak tersedia (diimpor via Private Key)');
+
+        if (!this.isSolanaAutoApproveActive()) {
+            const approved = await this.requestTxApproval('solana_signMessage', [messageHex], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling solana_signMessage...`);
+        const msgBuf = Buffer.from(messageHex, 'hex');
+        const signature = nacl.sign.detached(msgBuf, keypair.secretKey);
+        const signatureHex = Buffer.from(signature).toString('hex');
+        console.log(`[Session ${this.sessionId}] solana_signMessage completed`);
+        return { signatureHex };
+    }
+
+    async getActiveAptosAccount() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return AptosAccount.fromDerivationPath({
+                path: "m/44'/637'/0'/0'/0'",
+                mnemonic: walletData.mnemonic,
+            });
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveAptosAccount:`, error.message);
+            return null;
+        }
+    }
+
+    async getActiveAptosAccountDetails() {
+        try {
+            if (!this.wallet) return null;
+            const account = await this.getActiveAptosAccount();
+            if (!account) return null;
+            return {
+                address: account.accountAddress.toString(),
+                publicKey: account.publicKey.toString()
+            };
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveAptosAccountDetails:`, error.message);
+            return null;
+        }
+    }
+
+
+    async handleAptosSignTransaction(txHex, txType = 'SimpleTransaction', requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        const account = await this.getActiveAptosAccount();
+        if (!account) throw new Error('Aptos wallet tidak tersedia (diimpor via Private Key)');
+
+        if (!this.isAptosAutoApproveActive()) {
+            const approved = await this.requestTxApproval('aptos_signTransaction', [txHex], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling aptos_signTransaction...`);
+        const { Deserializer } = require('@aptos-labs/ts-sdk');
+        const txBuf = Buffer.from(txHex, 'hex');
+        const deserializer = new Deserializer(txBuf);
+        
+        let deserializedTx;
+        if (txType === 'MultiAgentTransaction') {
+            const { MultiAgentTransaction } = require('@aptos-labs/ts-sdk');
+            deserializedTx = MultiAgentTransaction.deserialize(deserializer);
+        } else {
+            const { SimpleTransaction } = require('@aptos-labs/ts-sdk');
+            deserializedTx = SimpleTransaction.deserialize(deserializer);
+        }
+
+        const authenticator = account.signTransactionWithAuthenticator(deserializedTx);
+        const authenticatorBytes = authenticator.bcsToBytes();
+        const signedTxHex = Buffer.from(authenticatorBytes).toString('hex');
+        
+        console.log(`[Session ${this.sessionId}] aptos_signTransaction completed`);
+        return { signedTxHex };
+    }
+
+    async handleAptosSignMessage(messageHex, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        const account = await this.getActiveAptosAccount();
+        if (!account) throw new Error('Aptos wallet tidak tersedia (diimpor via Private Key)');
+
+        if (!this.isAptosAutoApproveActive()) {
+            const approved = await this.requestTxApproval('aptos_signMessage', [messageHex], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling aptos_signMessage...`);
+        const msgBuf = Buffer.from(messageHex, 'hex');
+        const signature = account.sign(msgBuf);
+        const signatureHex = signature.toString(); // returns hex with 0x prefix
+        const publicKeyHex = account.publicKey.toString(); // returns hex with 0x prefix
+
+        console.log(`[Session ${this.sessionId}] aptos_signMessage completed`);
+        return { signatureHex, publicKeyHex };
+    }
+
+    async getActiveTonAccountDetails() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            
+            const key = await mnemonicToWalletKey(walletData.mnemonic.split(' '));
+            const wallet = WalletContractV4.create({
+                workchain: 0,
+                publicKey: key.publicKey
+            });
+            const { Address, beginCell, storeStateInit } = require('@ton/ton');
+            const rawAddress = wallet.address.toRawString();
+            const publicKeyHex = key.publicKey.toString('hex');
+            const userFriendlyAddress = wallet.address.toString({ bounceable: false, testOnly: false });
+            
+            const stateInitCell = beginCell()
+                .store(storeStateInit(wallet.init))
+                .endCell();
+            const stateInitBase64 = stateInitCell.toBoc().toString('base64');
+
+            return {
+                address: rawAddress,
+                userFriendlyAddress,
+                publicKey: publicKeyHex,
+                walletStateInit: stateInitBase64
+            };
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveTonAccountDetails:`, error.message);
+            return null;
+        }
+    }
+
+    async handleTonSend(appRequest, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        
+        const method = appRequest.method;
+        if (method !== 'sendTransaction') {
+            throw new Error(`Unsupported TON method: ${method}`);
+        }
+
+        const txParamsStr = appRequest.params[0];
+        const txParams = JSON.parse(txParamsStr);
+
+        if (!this.isTonAutoApproveActive()) {
+            const approved = await this.requestTxApproval('ton_sendTransaction', [txParams], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling TON sendTransaction...`);
+
+        const wallets = await this.loadWallets();
+        const walletData = wallets[this.wallet.address];
+        if (!walletData || !walletData.mnemonic) {
+            throw new Error('Mnemonic wallet tidak tersedia');
+        }
+
+        const key = await mnemonicToWalletKey(walletData.mnemonic.split(' '));
+        const wallet = WalletContractV4.create({
+            workchain: 0,
+            publicKey: key.publicKey
+        });
+
+        const rpcUrl = this.currentTonRpc || 'https://toncenter.com/api/v2/jsonRPC';
+        const { TonClient, Address, Cell, internal } = require('@ton/ton');
+        const client = new TonClient({
+            endpoint: rpcUrl,
+            apiKey: this.config.tonApiKey || undefined
+        });
+
+        const contract = client.open(wallet);
+        let seqno = 0;
+        try {
+            seqno = await contract.getSeqno();
+        } catch (e) {
+            console.log(`[Session ${this.sessionId}] Warning: Failed to fetch seqno from RPC (wallet might be uninitialized):`, e.message);
+        }
+
+        const transferMessages = [];
+        for (const msg of txParams.messages) {
+            const destAddress = Address.parse(msg.address);
+            const amountNano = BigInt(msg.amount);
+            
+            let bodyCell = undefined;
+            if (msg.payload) {
+                bodyCell = Cell.fromBase64(msg.payload);
+            }
+            
+            let stateInitCell = undefined;
+            if (msg.stateInit) {
+                stateInitCell = Cell.fromBase64(msg.stateInit);
+            }
+
+            transferMessages.push(internal({
+                to: destAddress,
+                value: amountNano,
+                bounce: true,
+                body: bodyCell,
+                init: stateInitCell ? {
+                    code: stateInitCell.beginParse().loadRef(),
+                    data: stateInitCell.beginParse().loadRef()
+                } : undefined
+            }));
+        }
+
+        const transfer = wallet.createTransfer({
+            seqno,
+            secretKey: key.secretKey,
+            messages: transferMessages,
+            sendMode: 3
+        });
+
+        const signedBoc = transfer.toBoc().toString('base64');
+
+        try {
+            await client.sendExternalMessage(wallet, transfer);
+            console.log(`[Session ${this.sessionId}] TON Transaction broadcasted successfully`);
+        } catch (broadcastErr) {
+            console.warn(`[Session ${this.sessionId}] Warning: TON broadcast failed/rejected:`, broadcastErr.message);
+        }
+
+        return JSON.stringify({ boc: signedBoc });
     }
 }
 

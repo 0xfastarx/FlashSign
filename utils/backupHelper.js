@@ -19,6 +19,11 @@ function createBackup(chatId, password, dataDir) {
     const walletsFile = path.join(dataDir, `${idStr}_wallets.enc`);
     const rpcConfigFile = path.join(dataDir, `${idStr}_rpc-config.json`);
     const rpcPortsFile = path.join(dataDir, `${idStr}_rpc-ports.json`);
+    const solanaRpcFile = path.join(dataDir, `${idStr}_solana-rpc-config.json`);
+    const aptosRpcFile = path.join(dataDir, `${idStr}_aptos-rpc-config.json`);
+    const suiRpcFile = path.join(dataDir, `${idStr}_sui-rpc-config.json`);
+    const tonRpcFile = path.join(dataDir, `${idStr}_ton-rpc-config.json`);
+    const nearRpcFile = path.join(dataDir, `${idStr}_near-rpc-config.json`);
     const morseDbFile = path.join(dataDir, '.morse-messages-secure.json');
 
     // Baca konten masing-masing file jika ada
@@ -26,6 +31,11 @@ function createBackup(chatId, password, dataDir) {
     const wallets = fs.existsSync(walletsFile) ? fs.readFileSync(walletsFile).toString('base64') : null;
     const rpcConfig = fs.existsSync(rpcConfigFile) ? fs.readFileSync(rpcConfigFile, 'utf8') : null;
     const rpcPorts = fs.existsSync(rpcPortsFile) ? fs.readFileSync(rpcPortsFile, 'utf8') : null;
+    const solanaRpc = fs.existsSync(solanaRpcFile) ? fs.readFileSync(solanaRpcFile, 'utf8') : null;
+    const aptosRpc = fs.existsSync(aptosRpcFile) ? fs.readFileSync(aptosRpcFile, 'utf8') : null;
+    const suiRpc = fs.existsSync(suiRpcFile) ? fs.readFileSync(suiRpcFile, 'utf8') : null;
+    const tonRpc = fs.existsSync(tonRpcFile) ? fs.readFileSync(tonRpcFile, 'utf8') : null;
+    const nearRpc = fs.existsSync(nearRpcFile) ? fs.readFileSync(nearRpcFile, 'utf8') : null;
 
     // Baca pesan morse user
     let morseMessages = [];
@@ -46,6 +56,11 @@ function createBackup(chatId, password, dataDir) {
         wallets,
         rpcConfig,
         rpcPorts,
+        solanaRpc,
+        aptosRpc,
+        suiRpc,
+        tonRpc,
+        nearRpc,
         morseMessages
     };
 
@@ -111,6 +126,21 @@ function restoreBackup(chatId, password, backupObj, dataDir) {
     }
     if (payload.rpcPorts) {
         fs.writeFileSync(path.join(dataDir, `${idStr}_rpc-ports.json`), payload.rpcPorts, 'utf8');
+    }
+    if (payload.solanaRpc) {
+        fs.writeFileSync(path.join(dataDir, `${idStr}_solana-rpc-config.json`), payload.solanaRpc, 'utf8');
+    }
+    if (payload.aptosRpc) {
+        fs.writeFileSync(path.join(dataDir, `${idStr}_aptos-rpc-config.json`), payload.aptosRpc, 'utf8');
+    }
+    if (payload.suiRpc) {
+        fs.writeFileSync(path.join(dataDir, `${idStr}_sui-rpc-config.json`), payload.suiRpc, 'utf8');
+    }
+    if (payload.tonRpc) {
+        fs.writeFileSync(path.join(dataDir, `${idStr}_ton-rpc-config.json`), payload.tonRpc, 'utf8');
+    }
+    if (payload.nearRpc) {
+        fs.writeFileSync(path.join(dataDir, `${idStr}_near-rpc-config.json`), payload.nearRpc, 'utf8');
     }
 
     // Gabungkan data morse

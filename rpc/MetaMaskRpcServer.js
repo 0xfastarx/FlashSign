@@ -201,10 +201,23 @@ class MetaMaskRpcServer {
             const dappOrigin = requestOrigin || 'Unknown Origin';
             const isConnected = this.cryptoApp.isDappConnected(dappOrigin);
 
-            // Jika eth_accounts, kembalikan address hanya jika DApp sudah terkoneksi
+            // Jika eth_accounts, kembalikan address jika DApp sudah terkoneksi,
+            // atau jika DApp Approval OFF, sambungkan secara otomatis.
             if (method === 'eth_accounts') {
                 if (!isConnected) {
-                    return { jsonrpc: '2.0', id, result: [] };
+                    if (!this.cryptoApp.isDappConnectionApprovalRequired()) {
+                        const dappDetails = {
+                            dappName: this._extractDappName(dappOrigin),
+                            dappUrl: dappOrigin,
+                            chainId: this.cryptoApp.currentChainId,
+                            walletAddress: address,
+                            via: `RPC Inject Auto (Port ${this.port})`
+                        };
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                        this.cryptoApp.sendDappConnectNotification(dappDetails);
+                    } else {
+                        return { jsonrpc: '2.0', id, result: [] };
+                    }
                 }
                 console.log(`[RPC Inject] 👛 ${method} → ${address}`);
                 return { jsonrpc: '2.0', id, result: [address.toLowerCase()] };
@@ -220,7 +233,7 @@ class MetaMaskRpcServer {
                     via: `RPC Inject (Port ${this.port})`
                 };
 
-                if (this.cryptoApp.dappApprovalRequired && !isConnected) {
+                if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
                     console.log(`[RPC Inject] 🔐 DApp Approval ON — menunggu persetujuan user untuk: ${dappOrigin}`);
                     try {
                         await this.cryptoApp.requestDappApproval(dappDetails);
@@ -361,6 +374,447 @@ class MetaMaskRpcServer {
             }
 
             return { jsonrpc: '2.0', id, result: { ok: false, reason: 'No connected dapps' } };
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // ── SOLANA RPC HANDLERS ─────────────────────────────────────────────
+        // Extension Bitget mengirim Solana request ke port yang sama.
+        // Bot mendeteksi method berawalan solana_ dan memprosesnya di sini.
+        // ══════════════════════════════════════════════════════════════════════
+
+        if (method === 'solana_accounts' || method === 'solana_requestAccounts') {
+            const solAddress = await this.cryptoApp.getActiveSolanaAddress();
+            if (!solAddress) {
+                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi Solana wallet tidak tersedia`);
+                return { jsonrpc: '2.0', id, result: [] };
+            }
+
+            const dappOrigin = requestOrigin || 'Unknown Origin';
+            const isConnected = this.cryptoApp.isDappConnected(dappOrigin);
+
+            if (method === 'solana_requestAccounts') {
+                const dappDetails = {
+                    dappName: this._extractDappName(dappOrigin),
+                    dappUrl: dappOrigin,
+                    chainId: 'solana',
+                    walletAddress: solAddress,
+                    via: `RPC Inject Solana (Port ${this.port})`
+                };
+
+                if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
+                    console.log(`[RPC Inject] 🔐 DApp Approval ON (Solana) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    try {
+                        await this.cryptoApp.requestDappApproval(dappDetails);
+                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                    } catch (approvalError) {
+                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        return {
+                            jsonrpc: '2.0', id,
+                            error: { code: 4001, message: 'User rejected the connection request' }
+                        };
+                    }
+                } else if (!isConnected) {
+                    // Mode OFF dan belum terhubung: simpan dan kirim notifikasi info-only
+                    this.cryptoApp.addConnectedDapp(dappDetails);
+                    this.cryptoApp.sendDappConnectNotification(dappDetails);
+                }
+            } else {
+                // Untuk solana_accounts, kembalikan address jika DApp sudah terkoneksi,
+                // atau jika DApp Approval OFF, sambungkan secara otomatis.
+                if (!isConnected) {
+                    if (!this.cryptoApp.isDappConnectionApprovalRequired()) {
+                        const dappDetails = {
+                            dappName: this._extractDappName(dappOrigin),
+                            dappUrl: dappOrigin,
+                            chainId: 'solana',
+                            walletAddress: solAddress,
+                            via: `RPC Inject Solana Auto (Port ${this.port})`
+                        };
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                        this.cryptoApp.sendDappConnectNotification(dappDetails);
+                    } else {
+                        return { jsonrpc: '2.0', id, result: [] };
+                    }
+                }
+            }
+
+            console.log(`[RPC Inject] 🟣 ${method} → ${solAddress}`);
+            return { jsonrpc: '2.0', id, result: [solAddress] };
+        }
+
+        if (method === 'solana_signTransaction') {
+            try {
+                const txHex = params[0] || '';
+                const result = await this.cryptoApp.handleSolanaSignTransaction(txHex, requestOrigin);
+
+                // Kirim notifikasi Telegram
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const solAddress = (await this.cryptoApp.getActiveSolanaAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] SOLANA TX SIGNED!*\n\n` +
+                        `💳 \`${solAddress}\`\n` +
+                        `Method: \`solana_signTransaction\`\n` +
+                        `⛓️ Chain: *Solana*\n` +
+                        `🌐 RPC: *${this.cryptoApp.currentSolanaRpcName || 'Default'}*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ solana_signTransaction error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'solana_signMessage') {
+            try {
+                const messageHex = params[0] || '';
+                const result = await this.cryptoApp.handleSolanaSignMessage(messageHex, requestOrigin);
+
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const solAddress = (await this.cryptoApp.getActiveSolanaAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] SOLANA MESSAGE SIGNED!*\n\n` +
+                        `💳 \`${solAddress}\`\n` +
+                        `Method: \`solana_signMessage\`\n` +
+                        `⛓️ Chain: *Solana*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ solana_signMessage error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'solana_dapp_forceDisconnect') {
+            const disconnectInfo = params?.[0] || {};
+            const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
+            const reason = disconnectInfo.reason || 'unknown';
+
+            console.log(`[RPC Inject] 🔌 Solana DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+
+            if (this.cryptoApp.connectedDapps) {
+                const dapp = this.cryptoApp.connectedDapps.find(
+                    d => d.url === dappOrigin || dappOrigin.includes(d.url) || d.url.includes(dappOrigin)
+                );
+
+                if (dapp) {
+                    this.cryptoApp.removeConnectedDapp(dapp.id);
+                    this.cryptoApp.saveRpcConfig();
+                    console.log(`[RPC Inject] ✅ Solana DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                }
+            }
+
+            if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                const reasonLabel = {
+                    'wallet_disconnect': 'Wallet Disconnect',
+                    'manual_from_popup': 'Disconnect manual dari popup extension',
+                    'unknown': 'Tidak diketahui'
+                }[reason] || reason;
+
+                this.cryptoApp.bot.sendMessage(
+                    this.cryptoApp.sessionNotificationChatId,
+                    `🔌 *SOLANA DAPP DISCONNECT*\n\n` +
+                    `🌐 DApp: \`${dappOrigin}\`\n` +
+                    `📋 Alasan: ${reasonLabel}\n` +
+                    `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
+                    `✅ DApp telah diputus dari bot secara otomatis.`,
+                    { parse_mode: 'Markdown' }
+                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+            }
+
+            return { jsonrpc: '2.0', id, result: { ok: true } };
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // ── APTOS RPC HANDLERS ──────────────────────────────────────────────
+        // Extension Bitget mengirim Aptos request ke port yang sama.
+        // Bot mendeteksi method berawalan aptos_ dan memprosesnya di sini.
+        // ══════════════════════════════════════════════════════════════════════
+
+        if (method === 'aptos_accounts' || method === 'aptos_requestAccounts') {
+            const aptosDetails = await this.cryptoApp.getActiveAptosAccountDetails();
+            if (!aptosDetails) {
+                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi Aptos wallet tidak tersedia`);
+                return { jsonrpc: '2.0', id, result: null };
+            }
+
+            const aptosAddress = aptosDetails.address;
+            const aptosPublicKey = aptosDetails.publicKey;
+            const dappOrigin = requestOrigin || 'Unknown Origin';
+            const isConnected = this.cryptoApp.isDappConnected(dappOrigin);
+
+            if (method === 'aptos_requestAccounts') {
+                const dappDetails = {
+                    dappName: this._extractDappName(dappOrigin),
+                    dappUrl: dappOrigin,
+                    chainId: 'aptos',
+                    walletAddress: aptosAddress,
+                    via: `RPC Inject Aptos (Port ${this.port})`
+                };
+
+                if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
+                    console.log(`[RPC Inject] 🔐 DApp Approval ON (Aptos) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    try {
+                        await this.cryptoApp.requestDappApproval(dappDetails);
+                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                    } catch (approvalError) {
+                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        return {
+                            jsonrpc: '2.0', id,
+                            error: { code: 4001, message: 'User rejected the connection request' }
+                        };
+                    }
+                } else if (!isConnected) {
+                    this.cryptoApp.addConnectedDapp(dappDetails);
+                    this.cryptoApp.sendDappConnectNotification(dappDetails);
+                }
+            } else {
+                if (!isConnected) {
+                    if (!this.cryptoApp.isDappConnectionApprovalRequired()) {
+                        const dappDetails = {
+                            dappName: this._extractDappName(dappOrigin),
+                            dappUrl: dappOrigin,
+                            chainId: 'aptos',
+                            walletAddress: aptosAddress,
+                            via: `RPC Inject Aptos Auto (Port ${this.port})`
+                        };
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                        this.cryptoApp.sendDappConnectNotification(dappDetails);
+                    } else {
+                        return { jsonrpc: '2.0', id, result: null };
+                    }
+                }
+            }
+
+            console.log(`[RPC Inject] 🟢 ${method} → ${aptosAddress}`);
+            return { jsonrpc: '2.0', id, result: { address: aptosAddress, publicKey: aptosPublicKey } };
+        }
+
+        if (method === 'aptos_signTransaction') {
+            try {
+                const txHex = params[0] || '';
+                const txType = params[1] || 'SimpleTransaction';
+                const result = await this.cryptoApp.handleAptosSignTransaction(txHex, txType, requestOrigin);
+
+                // Kirim notifikasi Telegram
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const aptosAddress = (await this.cryptoApp.getActiveAptosAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] APTOS TX SIGNED!*\n\n` +
+                        `💳 \`${aptosAddress}\`\n` +
+                        `Method: \`aptos_signTransaction\`\n` +
+                        `⛓️ Chain: *Aptos*\n` +
+                        `🌐 RPC: *${this.cryptoApp.currentAptosRpcName || 'Default'}*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ aptos_signTransaction error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'aptos_signMessage') {
+            try {
+                const messageHex = params[0] || '';
+                const result = await this.cryptoApp.handleAptosSignMessage(messageHex, requestOrigin);
+
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const aptosAddress = (await this.cryptoApp.getActiveAptosAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] APTOS MESSAGE SIGNED!*\n\n` +
+                        `💳 \`${aptosAddress}\`\n` +
+                        `Method: \`aptos_signMessage\`\n` +
+                        `⛓️ Chain: *Aptos*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ aptos_signMessage error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'aptos_dapp_forceDisconnect') {
+            const disconnectInfo = params?.[0] || {};
+            const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
+            const reason = disconnectInfo.reason || 'unknown';
+
+            console.log(`[RPC Inject] 🔌 Aptos DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+
+            if (this.cryptoApp.connectedDapps) {
+                const dapp = this.cryptoApp.connectedDapps.find(
+                    d => d.url === dappOrigin || dappOrigin.includes(d.url) || d.url.includes(dappOrigin)
+                );
+
+                if (dapp) {
+                    this.cryptoApp.removeConnectedDapp(dapp.id);
+                    this.cryptoApp.saveRpcConfig();
+                    console.log(`[RPC Inject] ✅ Aptos DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                }
+            }
+
+            if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                const reasonLabel = {
+                    'wallet_disconnect': 'Wallet Disconnect',
+                    'manual_from_popup': 'Disconnect manual dari popup extension',
+                    'unknown': 'Tidak diketahui'
+                }[reason] || reason;
+
+                this.cryptoApp.bot.sendMessage(
+                    this.cryptoApp.sessionNotificationChatId,
+                    `🔌 *APTOS DAPP DISCONNECT*\n\n` +
+                    `🌐 DApp: \`${dappOrigin}\`\n` +
+                    `📋 Alasan: ${reasonLabel}\n` +
+                    `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
+                    `✅ DApp telah diputus dari bot secara otomatis.`,
+                    { parse_mode: 'Markdown' }
+                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+            }
+
+            return { jsonrpc: '2.0', id, result: { ok: true } };
+        }
+
+        // ══════════════════════════════════════════════════════════════════════
+        // ── TON RPC HANDLERS ────────────────────────────────────────────────
+        // ══════════════════════════════════════════════════════════════════════
+
+        if (method === 'ton_connect') {
+            const tonDetails = await this.cryptoApp.getActiveTonAccountDetails();
+            if (!tonDetails) {
+                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi TON wallet tidak tersedia`);
+                return { jsonrpc: '2.0', id, result: null };
+            }
+
+            const tonAddress = tonDetails.address;
+            const dappOrigin = requestOrigin || 'Unknown Origin';
+            const isConnected = this.cryptoApp.isDappConnected(dappOrigin);
+
+            const dappDetails = {
+                dappName: this._extractDappName(dappOrigin),
+                dappUrl: dappOrigin,
+                chainId: 'ton',
+                walletAddress: tonDetails.userFriendlyAddress,
+                via: `RPC Inject TON (Port ${this.port})`
+            };
+
+            const paramsObj = params?.[0] || {};
+            const isInteractive = paramsObj.isInteractive !== false;
+
+            if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
+                if (!isInteractive) {
+                    console.log(`[RPC Inject] 🤫 Silent ton_connect restore rejected for: ${dappOrigin}`);
+                    return { jsonrpc: '2.0', id, result: null };
+                }
+                console.log(`[RPC Inject] 🔐 DApp Approval ON (TON) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                try {
+                    await this.cryptoApp.requestDappApproval(dappDetails);
+                    console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                    this.cryptoApp.addConnectedDapp(dappDetails);
+                } catch (approvalError) {
+                    console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                    return {
+                        jsonrpc: '2.0', id,
+                        error: { code: 4001, message: 'User rejected the connection request' }
+                    };
+                }
+            } else if (!isConnected) {
+                this.cryptoApp.addConnectedDapp(dappDetails);
+                this.cryptoApp.sendDappConnectNotification(dappDetails);
+            }
+
+            console.log(`[RPC Inject] 🟢 ${method} → ${tonAddress}`);
+            return { jsonrpc: '2.0', id, result: tonDetails };
+        }
+
+        if (method === 'ton_send') {
+            try {
+                const appRequest = params[0] || {};
+                const result = await this.cryptoApp.handleTonSend(appRequest, requestOrigin);
+
+                // Kirim notifikasi Telegram
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const tonAddress = (await this.cryptoApp.getActiveTonAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] TON TRANSACTION SENT!*\n\n` +
+                        `💳 \`${tonAddress}\`\n` +
+                        `Method: \`ton_send\` (\`${appRequest.method}\`)\n` +
+                        `⛓️ Chain: *TON*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ ton_send error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'ton_dapp_forceDisconnect') {
+            const disconnectInfo = params?.[0] || {};
+            const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
+            const reason = disconnectInfo.reason || 'unknown';
+
+            console.log(`[RPC Inject] 🔌 TON DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+
+            if (this.cryptoApp.connectedDapps) {
+                const dapp = this.cryptoApp.connectedDapps.find(
+                    d => d.url === dappOrigin || dappOrigin.includes(d.url) || d.url.includes(dappOrigin)
+                );
+
+                if (dapp) {
+                    this.cryptoApp.removeConnectedDapp(dapp.id);
+                    this.cryptoApp.saveRpcConfig();
+                    console.log(`[RPC Inject] ✅ TON DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                }
+            }
+
+            if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                const reasonLabel = {
+                    'wallet_disconnect': 'Wallet Disconnect',
+                    'manual_from_popup': 'Disconnect manual dari popup extension',
+                    'unknown': 'Tidak diketahui'
+                }[reason] || reason;
+
+                this.cryptoApp.bot.sendMessage(
+                    this.cryptoApp.sessionNotificationChatId,
+                    `🔌 *TON DAPP DISCONNECT*\n\n` +
+                    `🌐 DApp: \`${dappOrigin}\`\n` +
+                    `📋 Alasan: ${reasonLabel}\n` +
+                    `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
+                    `✅ DApp telah diputus dari bot secara otomatis.`,
+                    { parse_mode: 'Markdown' }
+                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+            }
+
+            return { jsonrpc: '2.0', id, result: { ok: true } };
         }
 
         // Jika method perlu intercept (transaksi/signing)

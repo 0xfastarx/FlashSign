@@ -526,7 +526,7 @@ class IntegrityGuard {
             } else {
                 // Fallback ke prompt terminal manual
                 console.log('ℹ️  Controller Bot offline. Fallback ke verifikasi terminal...');
-                
+
                 const setup2FASecret = this._readSetup2FASecretStatic();
                 if (setup2FASecret) {
                     console.log('\x1b[38;5;51m📱 Buka Google Authenticator → [Fastarx Bot - Setup]\x1b[0m');

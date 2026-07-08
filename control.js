@@ -51,7 +51,7 @@ class EnvDecryptor {
             let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
             decrypted += decipher.final('utf8');
             return decrypted;
-        } catch (e) {}
+        } catch (e) { }
 
         // Coba 2: Menggunakan approvedHash (jika file termodifikasi dan belum diverifikasi)
         try {
@@ -65,7 +65,7 @@ class EnvDecryptor {
             let decrypted = decipher.update(encryptedData, 'base64', 'utf8');
             decrypted += decipher.final('utf8');
             return decrypted;
-        } catch (e) {}
+        } catch (e) { }
 
         // Coba 3: Menggunakan static key (pasca setup.js dijalankan)
         try {
@@ -225,7 +225,7 @@ function verifyTOTP(secret, token, window = 1) {
             ) % 1000000;
             if (code.toString().padStart(6, '0') === token.toString()) return true;
         }
-    } catch (e) {}
+    } catch (e) { }
     return false;
 }
 
@@ -581,15 +581,15 @@ function scheduleAutoRestart(chatId) {
     if (restartTimer) {
         clearTimeout(restartTimer);
     }
-    
-    bot.sendMessage(chatId, '🔄 *Notifikasi:* Perubahan konfigurasi terdeteksi. Bot Saklar akan otomatis restart dalam *60 detik* untuk menerapkan konfigurasi baru.', { parse_mode: 'Markdown' }).catch(() => {});
-    
+
+    bot.sendMessage(chatId, '🔄 *Notifikasi:* Perubahan konfigurasi terdeteksi. Bot Saklar akan otomatis restart dalam *60 detik* untuk menerapkan konfigurasi baru.', { parse_mode: 'Markdown' }).catch(() => { });
+
     restartTimer = setTimeout(async () => {
         bot.sendMessage(chatId, '🔄 *Restarting...* Memulai ulang Bot Saklar sekarang.', { parse_mode: 'Markdown' })
-            .catch(() => {})
+            .catch(() => { })
             .finally(async () => {
                 console.log('🔄 Melakukan restart otomatis...');
-                
+
                 try {
                     await bot.stopPolling();
                     console.log('✅ Polling Telegram dihentikan.');
@@ -600,7 +600,7 @@ function scheduleAutoRestart(chatId) {
                 const spawnAndExit = () => {
                     const spawn = require('child_process').spawn;
                     const cleanEnv = { ...process.env };
-                    
+
                     // Hapus semua key dari process.env yang ada di file .env 
                     // agar dotenv pada proses baru membaca ulang nilai terbaru dari file disk.
                     try {
@@ -698,36 +698,36 @@ Pilih variabel konfigurasi yang ingin Anda ubah:
 function startEnvEditFlow(chatId, field) {
     const fieldName = ENV_FIELDS_MAP[field];
     if (!fieldName) return;
-    
+
     pendingEnvEdit.set(chatId, { field });
     bot.sendMessage(chatId, `📝 *Edit ${fieldName}*
 
 Silakan kirimkan nilai baru untuk *${fieldName}*:
-_(Ketik /batal untuk membatalkan)_`, { parse_mode: 'Markdown' }).catch(() => {});
+_(Ketik /batal untuk membatalkan)_`, { parse_mode: 'Markdown' }).catch(() => { });
 }
 
 function handleEnvEditInput(chatId, field, value) {
     const fieldName = ENV_FIELDS_MAP[field];
-    
+
     // Validasi
     if (field === 'ADMIN_CHAT_ID_ENCRYPTED' || field === 'OWNER_TELEGRAM_ID_ENCRYPTED') {
         if (!/^\d+$/.test(value)) {
-            bot.sendMessage(chatId, '❌ Input harus berupa angka. Silakan kirim ulang atau ketik /batal:').catch(() => {});
+            bot.sendMessage(chatId, '❌ Input harus berupa angka. Silakan kirim ulang atau ketik /batal:').catch(() => { });
             return;
         }
     }
     if (field === 'ADMIN_PASSWORD_ENCRYPTED' || field === 'SCRIPT_PASSWORD_ENCRYPTED') {
         if (value.length < 4) {
-            bot.sendMessage(chatId, '❌ Password minimal harus 4 karakter. Silakan kirim ulang atau ketik /batal:').catch(() => {});
+            bot.sendMessage(chatId, '❌ Password minimal harus 4 karakter. Silakan kirim ulang atau ketik /batal:').catch(() => { });
             return;
         }
     }
 
     pendingEnvEdit.delete(chatId);
-    
+
     const encryptedValue = encryptValue(value);
     if (!encryptedValue) {
-        bot.sendMessage(chatId, '❌ Gagal mengenkripsi nilai baru. Aksi dibatalkan.').catch(() => {});
+        bot.sendMessage(chatId, '❌ Gagal mengenkripsi nilai baru. Aksi dibatalkan.').catch(() => { });
         sendEnvMenu(chatId);
         return;
     }
@@ -738,12 +738,12 @@ function handleEnvEditInput(chatId, field, value) {
         if (field === 'CONTROLLER_BOT_TOKEN_ENCRYPTED' || field === 'ADMIN_CHAT_ID_ENCRYPTED') {
             note = '\n\n*⚠️ Catatan:* Perubahan Token Controller atau Admin Chat ID akan aktif setelah Controller Bot di-restart.';
         }
-        bot.sendMessage(chatId, `✅ *${fieldName}* berhasil diperbarui di file .env!${note}`, { parse_mode: 'Markdown' }).catch(() => {});
+        bot.sendMessage(chatId, `✅ *${fieldName}* berhasil diperbarui di file .env!${note}`, { parse_mode: 'Markdown' }).catch(() => { });
         scheduleAutoRestart(chatId);
     } else {
-        bot.sendMessage(chatId, '❌ Gagal mengupdate file .env.').catch(() => {});
+        bot.sendMessage(chatId, '❌ Gagal mengupdate file .env.').catch(() => { });
     }
-    
+
     setTimeout(() => sendEnvMenu(chatId), 1000);
 }
 
@@ -767,38 +767,38 @@ Atau scan QR Code di bawah ini:
 *Konfirmasi:* Silakan masukkan kode 6-digit OTP dari Authenticator Anda untuk mengaktifkan 2FA baru ini.
 _(Ketik /batal untuk membatalkan)_`;
 
-    bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }).catch(() => {});
+    bot.sendMessage(chatId, text, { parse_mode: 'Markdown' }).catch(() => { });
 }
 
 function handle2faSetupConfirm(chatId, secret, otpCode) {
     if (!verifyTOTP(secret, otpCode)) {
-        bot.sendMessage(chatId, '❌ Kode OTP salah. Silakan coba lagi atau ketik /batal untuk membatalkan:').catch(() => {});
+        bot.sendMessage(chatId, '❌ Kode OTP salah. Silakan coba lagi atau ketik /batal untuk membatalkan:').catch(() => { });
         return;
     }
 
     pending2faSetup.delete(chatId);
-    
+
     const encryptedSecret = encryptValue(secret);
     if (!encryptedSecret) {
-        bot.sendMessage(chatId, '❌ Gagal mengenkripsi 2FA Secret. Aksi dibatalkan.').catch(() => {});
+        bot.sendMessage(chatId, '❌ Gagal mengenkripsi 2FA Secret. Aksi dibatalkan.').catch(() => { });
         sendEnvMenu(chatId);
         return;
     }
 
     const ok = updateEnvField('SETUP_2FA_SECRET_ENCRYPTED', encryptedSecret);
     if (ok) {
-        bot.sendMessage(chatId, '✅ *Setup 2FA* berhasil diperbarui dan aktif!').catch(() => {});
+        bot.sendMessage(chatId, '✅ *Setup 2FA* berhasil diperbarui dan aktif!').catch(() => { });
         scheduleAutoRestart(chatId);
     } else {
-        bot.sendMessage(chatId, '❌ Gagal menyimpan 2FA Secret baru ke file .env.').catch(() => {});
+        bot.sendMessage(chatId, '❌ Gagal menyimpan 2FA Secret baru ke file .env.').catch(() => { });
     }
-    
+
     setTimeout(() => sendEnvMenu(chatId), 1000);
 }
 
 function handleStartupOtpInput(chatId, otpCode) {
     if (!pendingOtpRequest) return;
-    
+
     // Dapatkan secret 2FA
     const approvedHash = integrityGuard.getApprovedHash() || '';
     const envContent = fs.readFileSync(path.join(__dirname, '.env'), 'utf8');
@@ -811,8 +811,8 @@ function handleStartupOtpInput(chatId, otpCode) {
 
     if (secret) {
         if (verifyTOTP(secret, otpCode)) {
-            bot.sendMessage(chatId, '✅ *OTP Terverifikasi!* Startup Bot Utama disetujui.', { parse_mode: 'Markdown' }).catch(() => {});
-            
+            bot.sendMessage(chatId, '✅ *OTP Terverifikasi!* Startup Bot Utama disetujui.', { parse_mode: 'Markdown' }).catch(() => { });
+
             const responseObj = pendingOtpRequest.res;
             clearTimeout(pendingOtpRequest.timeout);
             pendingOtpRequest = null;
@@ -820,11 +820,11 @@ function handleStartupOtpInput(chatId, otpCode) {
             responseObj.writeHead(200);
             responseObj.end(JSON.stringify({ verified: true }));
         } else {
-            bot.sendMessage(chatId, '❌ *OTP Salah.* Silakan coba lagi.').catch(() => {});
+            bot.sendMessage(chatId, '❌ *OTP Salah.* Silakan coba lagi.').catch(() => { });
         }
     } else {
-        bot.sendMessage(chatId, '⚠️ 2FA belum dikonfigurasi di file .env Anda.').catch(() => {});
-        
+        bot.sendMessage(chatId, '⚠️ 2FA belum dikonfigurasi di file .env Anda.').catch(() => { });
+
         const responseObj = pendingOtpRequest.res;
         clearTimeout(pendingOtpRequest.timeout);
         pendingOtpRequest = null;
@@ -1428,7 +1428,7 @@ bot.on('message', (msg) => {
             pendingEnvEdit.delete(msg.chat.id);
             pending2faSetup.delete(msg.chat.id);
             pendingExpiry.delete(msg.chat.id);
-            bot.sendMessage(msg.chat.id, '❌ Aksi dibatalkan.').catch(() => {});
+            bot.sendMessage(msg.chat.id, '❌ Aksi dibatalkan.').catch(() => { });
             sendMainMenu(msg.chat.id);
             return;
         }
@@ -1525,7 +1525,7 @@ server = http.createServer((req, res) => {
                 pendingOtpRequest.res.writeHead(200);
                 pendingOtpRequest.res.end(JSON.stringify({ verified: false, reason: 'superseded' }));
                 clearTimeout(pendingOtpRequest.timeout);
-            } catch (err) {}
+            } catch (err) { }
         }
 
         // Baca body POST untuk mendapatkan changeReason
@@ -1536,13 +1536,13 @@ server = http.createServer((req, res) => {
             try {
                 const parsed = JSON.parse(body);
                 if (parsed.changeReason) changeReason = parsed.changeReason;
-            } catch (e) {}
+            } catch (e) { }
 
             const timeout = setTimeout(() => {
                 if (pendingOtpRequest && pendingOtpRequest.res === res) {
                     res.writeHead(200);
                     res.end(JSON.stringify({ verified: false, reason: 'timeout' }));
-                    bot.sendMessage(ADMIN_CHAT_ID, '⏰ *Verifikasi OTP Timeout.*\nStartup Bot Utama dibatalkan karena tidak ada respon dalam 60 detik.', { parse_mode: 'Markdown' }).catch(() => {});
+                    bot.sendMessage(ADMIN_CHAT_ID, '⏰ *Verifikasi OTP Timeout.*\nStartup Bot Utama dibatalkan karena tidak ada respon dalam 60 detik.', { parse_mode: 'Markdown' }).catch(() => { });
                     pendingOtpRequest = null;
                 }
             }, 60000);
