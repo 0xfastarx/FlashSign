@@ -1030,23 +1030,80 @@ class TelegramFullController {
         );
     }
 
-    async showAutoApproveTxMenu(chatId) {
+    showAutoApproveChainSelectMenu(chatId) {
+        const menu = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🌐 EVM RPCs', callback_data: 'auto_approve_chain_evm' },
+                        { text: '🟣 Solana RPCs', callback_data: 'auto_approve_chain_solana' }
+                    ],
+                    [
+                        { text: '🔵 Aptos RPCs', callback_data: 'auto_approve_chain_aptos' },
+                        { text: '🟡 Sui RPCs', callback_data: 'auto_approve_chain_sui' }
+                    ],
+                    [
+                        { text: '💎 TON RPCs', callback_data: 'auto_approve_chain_ton' },
+                        { text: '🌿 NEAR RPCs', callback_data: 'auto_approve_chain_near' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'dapps_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, '⚡ KELOLA AUTO APPROVE TX (PILIH JARINGAN):', menu);
+    }
+
+    async showAutoApproveTxMenu(chatId, chainType = 'evm') {
         const cryptoApp = this.userSessions.get(chatId);
         if (!cryptoApp) {
             this.bot.sendMessage(chatId, '❌ Sesi tidak ditemukan. Silakan /start ulang.');
             return;
         }
 
-        const rpcList = Object.entries(cryptoApp.savedRpcs || {});
+        const isEvm = chainType === 'evm';
+        const isSolana = chainType === 'solana';
+        const isAptos = chainType === 'aptos';
+        const isSui = chainType === 'sui';
+        const isTon = chainType === 'ton';
+        const isNear = chainType === 'near';
+
+        let savedRpcs = {};
+        let chainLabel = 'EVM';
+        if (isEvm) {
+            savedRpcs = cryptoApp.savedRpcs;
+            chainLabel = 'EVM';
+        } else if (isSolana) {
+            savedRpcs = cryptoApp.savedSolanaRpcs;
+            chainLabel = 'SOLANA';
+        } else if (isAptos) {
+            savedRpcs = cryptoApp.savedAptosRpcs;
+            chainLabel = 'APTOS';
+        } else if (isSui) {
+            savedRpcs = cryptoApp.savedSuiRpcs;
+            chainLabel = 'SUI';
+        } else if (isTon) {
+            savedRpcs = cryptoApp.savedTonRpcs;
+            chainLabel = 'TON';
+        } else if (isNear) {
+            savedRpcs = cryptoApp.savedNearRpcs;
+            chainLabel = 'NEAR';
+        }
+
+        const rpcList = Object.entries(savedRpcs || {});
+        const backCallback = 'auto_approve_menu';
+
         if (rpcList.length === 0) {
-            const keyboard = [[{ text: '🔙 Kembali', callback_data: 'dapps_menu' }]];
-            this.bot.sendMessage(chatId, '📭 Tidak ada RPC tersimpan di RPC Management. Silakan tambah RPC terlebih dahulu.', {
+            const keyboard = [[{ text: '🔙 Kembali', callback_data: backCallback }]];
+            this.bot.sendMessage(chatId, `📭 Tidak ada RPC ${chainLabel} tersimpan. Silakan tambah RPC terlebih dahulu.`, {
                 reply_markup: { inline_keyboard: keyboard }
             });
             return;
         }
 
-        let message = '⚡ *KELOLA AUTO APPROVE TX PER RPC*\n\n' +
+        let message = `⚡ *KELOLA AUTO APPROVE TX PER RPC (${chainLabel})*\n\n` +
                       'Klik tombol di bawah untuk mengubah status Auto Approve masing-masing RPC:\n' +
                       '🟢 *Auto* — Transaksi otomatis dieksekusi.\n' +
                       '🔴 *Manual* — Transaksi memerlukan konfirmasi (Accept/Reject).\n\n';
@@ -1056,10 +1113,19 @@ class TelegramFullController {
             const isAuto = rpc.autoApprove !== false;
             const statusLabel = isAuto ? '🟢 Auto' : '🔴 Manual';
             const buttonText = `${rpc.name} (${statusLabel})`;
-            keyboard.push([{ text: buttonText, callback_data: `auto_approve_rpc_${key}` }]);
+            
+            let callbackData = '';
+            if (isEvm) callbackData = `auto_approve_rpc_${key}`;
+            else if (isSolana) callbackData = `auto_approve_solrpc_${key}`;
+            else if (isAptos) callbackData = `auto_approve_aptrpc_${key}`;
+            else if (isSui) callbackData = `auto_approve_suirpc_${key}`;
+            else if (isTon) callbackData = `auto_approve_tonrpc_${key}`;
+            else if (isNear) callbackData = `auto_approve_nearrpc_${key}`;
+
+            keyboard.push([{ text: buttonText, callback_data: callbackData }]);
         });
 
-        keyboard.push([{ text: '🔙 Kembali', callback_data: 'dapps_menu' }]);
+        keyboard.push([{ text: '🔙 Kembali', callback_data: backCallback }]);
 
         this.bot.sendMessage(chatId, message, {
             parse_mode: 'Markdown',
@@ -2751,11 +2817,49 @@ class TelegramFullController {
                 return;
             }
 
+            let solanaAddressText = 'Tidak tersedia (diimpor via Private Key)';
+            let aptosAddressText = 'Tidak tersedia (diimpor via Private Key)';
+            let suiAddressText = 'Tidak tersedia (diimpor via Private Key)';
+            let tonAddressText = 'Tidak tersedia (diimpor via Private Key)';
+            let nearAddressText = 'Tidak tersedia (diimpor via Private Key)';
+            if (result.mnemonic) {
+                const solAddress = cryptoApp.deriveSolanaAddress(result.mnemonic);
+                if (solAddress) {
+                    solanaAddressText = `\`${solAddress}\``;
+                }
+                const aptAddress = cryptoApp.deriveAptosAddress(result.mnemonic);
+                if (aptAddress) {
+                    aptosAddressText = `\`${aptAddress}\``;
+                }
+                const suiAddress = cryptoApp.deriveSuiAddress(result.mnemonic);
+                if (suiAddress) {
+                    suiAddressText = `\`${suiAddress}\``;
+                }
+                const tonAddress = await cryptoApp.deriveTonAddress(result.mnemonic);
+                if (tonAddress) {
+                    tonAddressText = `\`${tonAddress}\``;
+                }
+                const nearAddress = cryptoApp.deriveNearAddress(result.mnemonic);
+                if (nearAddress) {
+                    nearAddressText = `\`${nearAddress}\``;
+                }
+            }
+
             // Selalu tampilkan private key
             let msg =
                 `🔐 *BACKUP DATA — ${result.nickname}*\n\n` +
-                `📍 *Address:*\n` +
+                `📍 *EVM Address:*\n` +
                 `\`${result.address}\`\n\n` +
+                `📍 *Solana Address:*\n` +
+                `${solanaAddressText}\n\n` +
+                `📍 *Aptos Address:*\n` +
+                `${aptosAddressText}\n\n` +
+                `📍 *Sui Address:*\n` +
+                `${suiAddressText}\n\n` +
+                `📍 *TON Address:*\n` +
+                `${tonAddressText}\n\n` +
+                `📍 *NEAR Address:*\n` +
+                `${nearAddressText}\n\n` +
                 `🔑 *PRIVATE KEY:*\n` +
                 `||\`${result.privateKey}\`||\n\n`;
 
@@ -3486,10 +3590,43 @@ class TelegramFullController {
                     wallets[address].lastUsed = new Date().toISOString();
                     await cryptoApp.saveWallets(wallets);
 
+                    let solanaText = 'Tidak tersedia (diimpor via Private Key)';
+                    let aptosText = 'Tidak tersedia (diimpor via Private Key)';
+                    let suiText = 'Tidak tersedia (diimpor via Private Key)';
+                    let tonText = 'Tidak tersedia (diimpor via Private Key)';
+                    let nearText = 'Tidak tersedia (diimpor via Private Key)';
+                    if (walletData.mnemonic) {
+                        const solAddress = cryptoApp.deriveSolanaAddress(walletData.mnemonic);
+                        if (solAddress) {
+                            solanaText = `\`${solAddress}\``;
+                        }
+                        const aptAddress = cryptoApp.deriveAptosAddress(walletData.mnemonic);
+                        if (aptAddress) {
+                            aptosText = `\`${aptAddress}\``;
+                        }
+                        const suiAddress = cryptoApp.deriveSuiAddress(walletData.mnemonic);
+                        if (suiAddress) {
+                            suiText = `\`${suiAddress}\``;
+                        }
+                        const tonAddress = await cryptoApp.deriveTonAddress(walletData.mnemonic);
+                        if (tonAddress) {
+                            tonText = `\`${tonAddress}\``;
+                        }
+                        const nearAddress = cryptoApp.deriveNearAddress(walletData.mnemonic);
+                        if (nearAddress) {
+                            nearText = `\`${nearAddress}\``;
+                        }
+                    }
+
                     this.bot.sendMessage(chatId,
                         `✅ WALLET DIPILIH!\n\n` +
                         `🏷️ ${walletData.nickname}\n` +
-                        `📍 \`${address}\`\n\n` +
+                        `📍 EVM Address: \`${address}\`\n` +
+                        `📍 Solana Address: ${solanaText}\n` +
+                        `📍 Aptos Address: ${aptosText}\n` +
+                        `📍 Sui Address: ${suiText}\n` +
+                        `📍 TON Address: ${tonText}\n` +
+                        `📍 NEAR Address: ${nearText}\n\n` +
                         `Wallet aktif dan siap digunakan.`,
                         { parse_mode: 'Markdown' }
                     );
@@ -3530,6 +3667,95 @@ class TelegramFullController {
 
         } catch (error) {
             this.bot.sendMessage(chatId, `❌ Error getting stats: ${error.message}`);
+        }
+    }
+
+    showBalanceNetworkSelectMenu(cryptoApp, chatId) {
+        if (!cryptoApp.wallet) {
+            this.bot.sendMessage(chatId, '❌ Wallet belum setup!');
+            return;
+        }
+
+        const menu = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🌐 EVM Balance', callback_data: 'balance_evm_run' },
+                        { text: '🟣 Solana Balance', callback_data: 'balance_solana_run' }
+                    ],
+                    [
+                        { text: '🔵 Aptos Balance', callback_data: 'balance_aptos_run' },
+                        { text: '🟡 Sui Balance', callback_data: 'balance_sui_run' }
+                    ],
+                    [
+                        { text: '💎 TON Balance', callback_data: 'balance_ton_run' },
+                        { text: '🌿 NEAR Balance', callback_data: 'balance_near_run' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'wallet_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, '💰 CEK BALANCE (PILIH JARINGAN):', menu);
+    }
+
+    async getSolanaTransactionStats(cryptoApp, chatId) {
+        if (!cryptoApp.wallet) {
+            this.bot.sendMessage(chatId, '❌ Wallet belum setup!');
+            return;
+        }
+
+        try {
+            const wallets = await cryptoApp.loadWallets();
+            const walletData = wallets[cryptoApp.wallet.address];
+
+            if (!walletData || !walletData.mnemonic) {
+                this.bot.sendMessage(chatId, '⚠️ Wallet saat ini tidak memiliki alamat Solana (diimpor via Private Key).');
+                return;
+            }
+
+            await this.bot.sendMessage(chatId, '🔄 Mengecek balance Solana...');
+
+            const solAddress = cryptoApp.deriveSolanaAddress(walletData.mnemonic);
+            if (!solAddress) {
+                this.bot.sendMessage(chatId, '❌ Gagal menurunkan alamat Solana dari mnemonic.');
+                return;
+            }
+
+            // Inisialisasi koneksi Solana
+            const solRpcUrl = cryptoApp.currentSolanaRpc || 'https://api.mainnet-beta.solana.com';
+            
+            // Cari commitment level jika ada
+            let commitment = 'confirmed';
+            if (cryptoApp.savedSolanaRpcs) {
+                for (const key in cryptoApp.savedSolanaRpcs) {
+                    if (cryptoApp.savedSolanaRpcs[key].rpc === solRpcUrl) {
+                        commitment = cryptoApp.savedSolanaRpcs[key].commitment || 'confirmed';
+                        break;
+                    }
+                }
+            }
+
+            const { Connection, PublicKey } = require('@solana/web3.js');
+            const connection = new Connection(solRpcUrl, commitment);
+            const pubKey = new PublicKey(solAddress);
+            const balanceLamports = await connection.getBalance(pubKey);
+            const balanceSol = balanceLamports / 1e9;
+
+            const message =
+                `📊 SOLANA BALANCE INFO\n\n` +
+                `💳 Solana Wallet: \`${solAddress}\`\n` +
+                `💰 Balance: ${balanceSol} SOL\n` +
+                `🌐 Solana RPC: ${cryptoApp.currentSolanaRpcName || 'Solana Mainnet'}\n` +
+                `🔗 Endpoint: \`${solRpcUrl}\`\n` +
+                `🕒 ${new Date().toLocaleString()}`;
+
+            this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
         }
     }
 
@@ -3735,6 +3961,34 @@ class TelegramFullController {
     showRpcMenu(cryptoApp, chatId) {
         if (!cryptoApp) return;
 
+        const menu = {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '🌐 EVM RPC', callback_data: 'rpc_evm_menu' },
+                        { text: '🟣 Solana RPC', callback_data: 'solana_rpc_menu' }
+                    ],
+                    [
+                        { text: '🔵 Aptos RPC', callback_data: 'aptos_rpc_menu' },
+                        { text: '🟡 Sui RPC', callback_data: 'sui_rpc_menu' }
+                    ],
+                    [
+                        { text: '💎 TON RPC', callback_data: 'ton_rpc_menu' },
+                        { text: '🌿 NEAR RPC', callback_data: 'near_rpc_menu' }
+                    ],
+                    [
+                        { text: '🔙 Main Menu', callback_data: 'main_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, '🌐 RPC MANAGEMENT (PILIH JARINGAN):', menu);
+    }
+
+    showEvmRpcMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
         const autoSaveStatusIcon = cryptoApp.autoSaveRpc ? '✅' : '❌';
         const autoSaveText = `Auto-Save: ${cryptoApp.autoSaveRpc ? 'ON' : 'OFF'}`;
 
@@ -3757,13 +4011,1558 @@ class TelegramFullController {
                         { text: `${autoSaveStatusIcon} ${autoSaveText}`, callback_data: 'rpc_toggle_autosave' }
                     ],
                     [
-                        { text: '🔙 Main Menu', callback_data: 'main_menu' }
+                        { text: '🔙 Kembali', callback_data: 'rpc_menu' }
                     ]
                 ]
             }
         };
 
-        this.bot.sendMessage(chatId, '🌐 RPC MANAGEMENT:', menu);
+        this.bot.sendMessage(chatId, '🌐 EVM RPC MANAGEMENT:', menu);
+    }
+
+    // Solana RPC UI methods
+    async showSolanaRpcMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const activeRpc = cryptoApp.currentSolanaRpcName || 'Tidak ada';
+        const text = `🟣 *SOLANA RPC MANAGEMENT*\n\n` +
+            `• *RPC Aktif:* \`${activeRpc}\`\n` +
+            `• *Endpoint:* \`${cryptoApp.currentSolanaRpc || 'Belum diatur'}\`\n\n` +
+            `Silakan pilih opsi di bawah untuk mengelola RPC Solana Anda:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📡 Pilih RPC Solana', callback_data: 'solana_rpc_select' },
+                        { text: '➕ Tambah RPC Solana', callback_data: 'solana_rpc_add' }
+                    ],
+                    [
+                        { text: '✏️ Edit RPC Solana', callback_data: 'solana_rpc_edit_menu' },
+                        { text: '🗑️ Hapus RPC Solana', callback_data: 'solana_rpc_delete_menu' }
+                    ],
+                    [
+                        { text: 'ℹ️ Info RPC Solana', callback_data: 'solana_rpc_info' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'rpc_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async showSolanaRpcList(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedSolanaRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '➕ Tambah RPC Solana', callback_data: 'solana_rpc_add' }],
+                        [{ text: '🔙 Batal', callback_data: 'solana_rpc_menu' }]
+                    ]
+                }
+            };
+            this.bot.sendMessage(chatId, '⚠️ Belum ada RPC Solana yang tersimpan. Silakan tambah RPC baru:', menu);
+            return;
+        }
+
+        const buttons = [];
+        for (const key of keys) {
+            const rpc = savedRpcs[key];
+            const isActive = rpc.rpc === cryptoApp.currentSolanaRpc;
+            const prefix = isActive ? '🟢 ' : '';
+            buttons.push([{
+                text: `${prefix}${rpc.name} (${rpc.priorityFee || 'Medium'})`,
+                callback_data: isActive ? 'solana_rpc_menu' : `solana_rpc_use_${key}`
+            }]);
+        }
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'solana_rpc_menu' }]);
+
+        const menu = {
+            reply_markup: {
+                inline_keyboard: buttons
+            }
+        };
+
+        this.bot.sendMessage(chatId, '📡 Pilih RPC Solana untuk diaktifkan:', menu);
+    }
+
+    async startAddSolanaRpcFlow(cryptoApp, chatId, step, data = {}) {
+        if (step === 1) {
+            this.userStates.set(chatId, { action: 'awaiting_solana_rpc_add', step: 1, data: {} });
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🔙 Batal', callback_data: 'solana_rpc_menu' }]]
+                }
+            };
+            this.bot.sendMessage(chatId, '📡 Masukkan Nama/Label untuk RPC Solana baru Anda:', menu);
+        } else if (step === 2) {
+            this.userStates.set(chatId, { action: 'awaiting_solana_rpc_add', step: 2, data });
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🔙 Batal', callback_data: 'solana_rpc_menu' }]]
+                }
+            };
+            this.bot.sendMessage(chatId, `📡 Masukkan URL RPC Solana untuk *${data.name}*:`, menu);
+        }
+    }
+
+    async processAddSolanaRpc(cryptoApp, chatId, text, userState) {
+        const step = userState.step;
+        const data = userState.data || {};
+
+        if (step === 1) {
+            if (!text.trim()) {
+                this.bot.sendMessage(chatId, '❌ Nama RPC tidak boleh kosong. Silakan masukkan nama RPC Solana:');
+                return;
+            }
+            data.name = text.trim();
+            await this.startAddSolanaRpcFlow(cryptoApp, chatId, 2, data);
+        } else if (step === 2) {
+            const url = text.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL RPC tidak valid. Harus dimulai dengan http:// atau https://. Silakan masukkan ulang:');
+                return;
+            }
+            this.userStates.delete(chatId);
+            const key = cryptoApp.addSolanaRpc(url, data.name);
+            if (key) {
+                this.bot.sendMessage(chatId, `✅ RPC Solana *${data.name}* berhasil ditambahkan dan diaktifkan!`);
+            } else {
+                this.bot.sendMessage(chatId, '❌ Gagal menambahkan RPC Solana.');
+            }
+            await this.showSolanaRpcMenu(cryptoApp, chatId);
+        }
+    }
+
+    async showSolanaRpcDeleteMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedSolanaRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'solana_rpc_menu' }]]
+                }
+            };
+            this.bot.sendMessage(chatId, '⚠️ Tidak ada RPC Solana yang disimpan.', menu);
+            return;
+        }
+
+        const buttons = [];
+        for (const key of keys) {
+            const rpc = savedRpcs[key];
+            const isActive = rpc.rpc === cryptoApp.currentSolanaRpc;
+            const callbackData = isActive ? 'solana_rpc_delete_active' : `solana_rpc_delete_exec_${key}`;
+            buttons.push([{
+                text: `🗑️ ${rpc.name} (${isActive ? 'Aktif' : 'Hapus'})`,
+                callback_data: callbackData
+            }]);
+        }
+        buttons.push([{ text: '🔙 Batal', callback_data: 'solana_rpc_menu' }]);
+
+        const menu = {
+            reply_markup: {
+                inline_keyboard: buttons
+            }
+        };
+
+        this.bot.sendMessage(chatId, '🗑️ Pilih RPC Solana yang ingin dihapus (RPC aktif tidak bisa dihapus):', menu);
+    }
+
+    async showSolanaRpcEditMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedSolanaRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'solana_rpc_menu' }]]
+                }
+            };
+            this.bot.sendMessage(chatId, '⚠️ Tidak ada RPC Solana untuk diedit.', menu);
+            return;
+        }
+
+        const buttons = [];
+        for (const key of keys) {
+            const rpc = savedRpcs[key];
+            buttons.push([{
+                text: `✏️ ${rpc.name} (${rpc.priorityFee || 'Medium'})`,
+                callback_data: `solana_rpc_edit_select_${key}`
+            }]);
+        }
+        buttons.push([{ text: '🔙 Batal', callback_data: 'solana_rpc_menu' }]);
+
+        const menu = {
+            reply_markup: {
+                inline_keyboard: buttons
+            }
+        };
+
+        this.bot.sendMessage(chatId, '✏️ Pilih RPC Solana yang ingin diedit:', menu);
+    }
+
+    async showSolanaRpcEditPropMenu(cryptoApp, chatId, rpcKey) {
+        if (!cryptoApp) return;
+
+        const rpc = cryptoApp.savedSolanaRpcs[rpcKey];
+        if (!rpc) {
+            this.bot.sendMessage(chatId, '❌ RPC Solana tidak ditemukan.');
+            await this.showSolanaRpcEditMenu(cryptoApp, chatId);
+            return;
+        }
+
+        const text = `⚙️ *EDIT CONFIG RPC SOLANA*\n\n` +
+            `• *Nama:* \`${rpc.name}\`\n` +
+            `• *URL:* \`${rpc.rpc}\`\n` +
+            `• *Priority Fee:* \`${rpc.priorityFee || 'Medium'}\`\n` +
+            `• *Commitment:* \`${rpc.commitment || 'confirmed'}\`\n\n` +
+            `Pilih parameter yang ingin Anda ubah:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📝 Ubah Nama', callback_data: `solana_rpc_edit_prop_name_${rpcKey}` },
+                        { text: '🔗 Ubah URL', callback_data: `solana_rpc_edit_prop_url_${rpcKey}` }
+                    ],
+                    [
+                        { text: '⚡ Priority Fee: Low', callback_data: `solana_rpc_setfee_Low_${rpcKey}` },
+                        { text: '⚡ Medium', callback_data: `solana_rpc_setfee_Medium_${rpcKey}` }
+                    ],
+                    [
+                        { text: '⚡ High', callback_data: `solana_rpc_setfee_High_${rpcKey}` },
+                        { text: '⚡ Very High', callback_data: `solana_rpc_setfee_VeryHigh_${rpcKey}` }
+                    ],
+                    [
+                        { text: '🔒 Commit: processed', callback_data: `solana_rpc_setcommit_processed_${rpcKey}` },
+                        { text: 'confirmed', callback_data: `solana_rpc_setcommit_confirmed_${rpcKey}` }
+                    ],
+                    [
+                        { text: 'finalized', callback_data: `solana_rpc_setcommit_finalized_${rpcKey}` }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'solana_rpc_edit_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async startEditSolanaRpcInput(cryptoApp, chatId, rpcKey, property) {
+        this.userStates.set(chatId, {
+            action: 'awaiting_solana_rpc_edit',
+            rpcKey: rpcKey,
+            property: property
+        });
+
+        const menu = {
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 Batal', callback_data: `solana_rpc_edit_select_${rpcKey}` }]]
+            }
+        };
+
+        const promptText = property === 'name' ? 'Masukkan Nama/Label baru untuk RPC Solana ini:' : 'Masukkan URL baru untuk RPC Solana ini:';
+        this.bot.sendMessage(chatId, promptText, menu);
+    }
+
+    async processEditSolanaRpc(cryptoApp, chatId, text, userState) {
+        const { rpcKey, property } = userState;
+        const input = text.trim();
+
+        if (property === 'name') {
+            if (!input) {
+                this.bot.sendMessage(chatId, '❌ Nama tidak boleh kosong. Silakan masukkan nama baru:');
+                return;
+            }
+            cryptoApp.updateSolanaRpcProperty(rpcKey, 'name', input);
+            this.bot.sendMessage(chatId, '✅ Nama RPC Solana berhasil diubah!');
+        } else if (property === 'url') {
+            if (!input.startsWith('http://') && !input.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL tidak valid. Harus dimulai dengan http:// atau https://. Silakan masukkan ulang:');
+                return;
+            }
+            cryptoApp.updateSolanaRpcProperty(rpcKey, 'rpc', input);
+            this.bot.sendMessage(chatId, '✅ URL RPC Solana berhasil diubah!');
+        }
+
+        this.userStates.delete(chatId);
+        await this.showSolanaRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+    }
+
+    async showSolanaRpcInfo(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const activeRpc = cryptoApp.currentSolanaRpcName || 'Tidak ada';
+        const url = cryptoApp.currentSolanaRpc || 'Belum diatur';
+        
+        let priorityFee = 'Medium';
+        let commitment = 'confirmed';
+        
+        // Cari info dari savedRpcs
+        if (cryptoApp.savedSolanaRpcs) {
+            for (const key in cryptoApp.savedSolanaRpcs) {
+                if (cryptoApp.savedSolanaRpcs[key].rpc === url) {
+                    priorityFee = cryptoApp.savedSolanaRpcs[key].priorityFee || 'Medium';
+                    commitment = cryptoApp.savedSolanaRpcs[key].commitment || 'confirmed';
+                    break;
+                }
+            }
+        }
+
+        const text = `🟣 *SOLANA RPC DETAIL*\n\n` +
+            `• *Label RPC:* \`${activeRpc}\`\n` +
+            `• *URL Endpoint:* \`${url}\`\n` +
+            `• *Priority Fee Level:* \`${priorityFee}\`\n` +
+            `• *Commitment Level:* \`${commitment}\`\n\n` +
+            `🕒 ${new Date().toLocaleString()}`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'solana_rpc_menu' }]]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    // 🔵 Aptos RPC UI methods
+    async showAptosRpcMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const activeRpc = cryptoApp.currentAptosRpcName || 'Tidak ada';
+        const text = `🔵 *APTOS RPC MANAGEMENT*\n\n` +
+            `• *RPC Aktif:* \`${activeRpc}\`\n` +
+            `• *Endpoint:* \`${cryptoApp.currentAptosRpc || 'Belum diatur'}\`\n\n` +
+            `Silakan pilih opsi di bawah untuk mengelola RPC Aptos Anda:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📡 Pilih RPC Aptos', callback_data: 'aptos_rpc_select' },
+                        { text: '➕ Tambah RPC Aptos', callback_data: 'aptos_rpc_add' }
+                    ],
+                    [
+                        { text: '✏️ Edit RPC Aptos', callback_data: 'aptos_rpc_edit_menu' },
+                        { text: '🗑️ Hapus RPC Aptos', callback_data: 'aptos_rpc_delete_menu' }
+                    ],
+                    [
+                        { text: 'ℹ️ Info RPC Aptos', callback_data: 'aptos_rpc_info' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'rpc_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async showAptosRpcList(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedAptosRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '➕ Tambah RPC Aptos', callback_data: 'aptos_rpc_add' }],
+                        [{ text: '🔙 Batal', callback_data: 'aptos_rpc_menu' }]
+                    ]
+                }
+            };
+            this.bot.sendMessage(chatId, '📭 Belum ada RPC Aptos tersimpan.', menu);
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            const isActive = rpc.rpc === cryptoApp.currentAptosRpc;
+            const label = `${isActive ? '✅ ' : ''}${rpc.name}`;
+            return [{ text: label, callback_data: `aptos_rpc_sel_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'aptos_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '📡 PILIH RPC APTOS:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async startAddAptosRpcFlow(chatId) {
+        this.userStates.set(chatId, { action: 'awaiting_aptos_rpc_add', step: 'name' });
+        this.bot.sendMessage(chatId,
+            `➕ *TAMBAH RPC APTOS*\n\n` +
+            `Masukkan nama label untuk RPC ini (contoh: "Aptos Mainnet"):`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    async processAddAptosRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state) return;
+
+        if (state.step === 'name') {
+            state.aptosRpcName = input.trim();
+            state.step = 'url';
+            this.userStates.set(chatId, state);
+            this.bot.sendMessage(chatId,
+                `✅ Nama: *${state.aptosRpcName}*\n\n` +
+                `Sekarang masukkan URL RPC Aptos:\n` +
+                `(contoh: \`https://fullnode.mainnet.aptoslabs.com/v1\`)`,
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+
+        if (state.step === 'url') {
+            const url = input.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+
+            const key = cryptoApp.addAptosRpc(url, state.aptosRpcName);
+            this.userStates.delete(chatId);
+
+            this.bot.sendMessage(chatId,
+                `✅ RPC Aptos berhasil ditambahkan!\n\n` +
+                `🏷️ Nama: *${state.aptosRpcName}*\n` +
+                `🌐 URL: \`${url}\``,
+                { parse_mode: 'Markdown' }
+            );
+
+            await this.showAptosRpcMenu(cryptoApp, chatId);
+        }
+    }
+
+    async showAptosRpcDeleteMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedAptosRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC Aptos yang bisa dihapus.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'aptos_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `🗑️ ${rpc.name}`, callback_data: `aptos_rpc_del_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Batal', callback_data: 'aptos_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '🗑️ PILIH RPC APTOS UNTUK DIHAPUS:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showAptosRpcEditMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedAptosRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC Aptos yang bisa diedit.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'aptos_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `✏️ ${rpc.name}`, callback_data: `aptos_rpc_edit_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'aptos_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '✏️ PILIH RPC APTOS UNTUK DIEDIT:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showAptosRpcEditPropMenu(cryptoApp, chatId, rpcKey) {
+        const rpc = cryptoApp.savedAptosRpcs[rpcKey];
+        if (!rpc) {
+            this.bot.sendMessage(chatId, '❌ RPC tidak ditemukan.');
+            await this.showAptosRpcEditMenu(cryptoApp, chatId);
+            return;
+        }
+
+        const text = `✏️ *EDIT RPC APTOS: ${rpc.name}*\n\n` +
+            `• *URL:* \`${rpc.rpc}\`\n\n` +
+            `Pilih properti yang ingin diubah:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '🏷️ Ubah Nama', callback_data: `aptos_rpc_editprop_name_${rpcKey}` }],
+                    [{ text: '🌐 Ubah URL', callback_data: `aptos_rpc_editprop_url_${rpcKey}` }],
+                    [{ text: '🔙 Kembali', callback_data: 'aptos_rpc_edit_menu' }]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async processEditAptosRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state || !state.aptosEditKey || !state.aptosEditProp) return;
+
+        const rpcKey = state.aptosEditKey;
+        const prop = state.aptosEditProp;
+        const value = input.trim();
+
+        if (prop === 'name') {
+            cryptoApp.updateAptosRpcProperty(rpcKey, 'name', value);
+            if (cryptoApp.savedAptosRpcs[rpcKey]?.rpc === cryptoApp.currentAptosRpc) {
+                cryptoApp.currentAptosRpcName = value;
+                cryptoApp.saveAptosRpcConfig();
+            }
+        } else if (prop === 'rpc') {
+            if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+            const oldRpc = cryptoApp.savedAptosRpcs[rpcKey]?.rpc;
+            cryptoApp.updateAptosRpcProperty(rpcKey, 'rpc', value);
+            if (oldRpc === cryptoApp.currentAptosRpc) {
+                cryptoApp.currentAptosRpc = value;
+                cryptoApp.saveAptosRpcConfig();
+            }
+        }
+
+        this.userStates.delete(chatId);
+        this.bot.sendMessage(chatId, `✅ Properti RPC Aptos berhasil diperbarui!`);
+        await this.showAptosRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+    }
+
+    async showAptosRpcInfo(cryptoApp, chatId) {
+        const activeRpc = cryptoApp.currentAptosRpcName || 'Tidak ada';
+        const url = cryptoApp.currentAptosRpc || 'Belum diatur';
+
+        const text = `🔵 *APTOS RPC DETAIL*\n\n` +
+            `• *Label RPC:* \`${activeRpc}\`\n` +
+            `• *URL Endpoint:* \`${url}\`\n\n` +
+            `🕒 ${new Date().toLocaleString()}`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'aptos_rpc_menu' }]]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async getAptosBalanceStats(cryptoApp, chatId) {
+        if (!cryptoApp.wallet) {
+            this.bot.sendMessage(chatId, '❌ Wallet belum setup!');
+            return;
+        }
+
+        try {
+            const wallets = await cryptoApp.loadWallets();
+            const walletData = wallets[cryptoApp.wallet.address];
+
+            if (!walletData || !walletData.mnemonic) {
+                this.bot.sendMessage(chatId, '⚠️ Wallet saat ini tidak memiliki alamat Aptos (diimpor via Private Key).');
+                return;
+            }
+
+            await this.bot.sendMessage(chatId, '🔄 Mengecek balance Aptos...');
+
+            const aptAddress = cryptoApp.deriveAptosAddress(walletData.mnemonic);
+            if (!aptAddress) {
+                this.bot.sendMessage(chatId, '❌ Gagal menurunkan alamat Aptos dari mnemonic.');
+                return;
+            }
+
+            const aptRpcUrl = cryptoApp.currentAptosRpc || 'https://fullnode.mainnet.aptoslabs.com/v1';
+
+            const { Aptos, AptosConfig, Network } = require('@aptos-labs/ts-sdk');
+            const config = new AptosConfig({
+                network: Network.CUSTOM,
+                fullnode: aptRpcUrl
+            });
+            const aptos = new Aptos(config);
+
+            let balanceOctas = 0;
+            try {
+                const [balStr] = await aptos.view({
+                    payload: {
+                        function: '0x1::coin::balance',
+                        typeArguments: ['0x1::aptos_coin::AptosCoin'],
+                        functionArguments: [aptAddress],
+                    },
+                });
+                balanceOctas = parseInt(balStr) || 0;
+            } catch (e) {
+                // Account mungkin belum pernah menerima APT
+                balanceOctas = 0;
+            }
+
+            const balanceApt = balanceOctas / 1e8;
+
+            const message =
+                `📊 APTOS BALANCE INFO\n\n` +
+                `💳 Aptos Wallet: \`${aptAddress}\`\n` +
+                `💰 Balance: ${balanceApt} APT\n` +
+                `🌐 Aptos RPC: ${cryptoApp.currentAptosRpcName || 'Aptos Mainnet'}\n` +
+                `🔗 Endpoint: \`${aptRpcUrl}\`\n` +
+                `🕒 ${new Date().toLocaleString()}`;
+
+            this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+        }
+    }
+
+    // ===================================
+    // 🟡 SUI RPC MANAGEMENT (TELEGRAM UI)
+    // ===================================
+
+    async showSuiRpcMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const activeRpc = cryptoApp.currentSuiRpcName || 'Tidak ada';
+        const text = `🟡 *SUI RPC MANAGEMENT*\n\n` +
+            `• *RPC Aktif:* \`${activeRpc}\`\n` +
+            `• *Endpoint:* \`${cryptoApp.currentSuiRpc || 'Belum diatur'}\`\n\n` +
+            `Silakan pilih opsi di bawah untuk mengelola RPC Sui Anda:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📡 Pilih RPC Sui', callback_data: 'sui_rpc_select' },
+                        { text: '➕ Tambah RPC Sui', callback_data: 'sui_rpc_add' }
+                    ],
+                    [
+                        { text: '✏️ Edit RPC Sui', callback_data: 'sui_rpc_edit_menu' },
+                        { text: '🗑️ Hapus RPC Sui', callback_data: 'sui_rpc_delete_menu' }
+                    ],
+                    [
+                        { text: 'ℹ️ Info RPC Sui', callback_data: 'sui_rpc_info' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'rpc_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async showSuiRpcList(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedSuiRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '➕ Tambah RPC Sui', callback_data: 'sui_rpc_add' }],
+                        [{ text: '🔙 Batal', callback_data: 'sui_rpc_menu' }]
+                    ]
+                }
+            };
+            this.bot.sendMessage(chatId, '📭 Belum ada RPC Sui tersimpan.', menu);
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            const isActive = rpc.rpc === cryptoApp.currentSuiRpc;
+            const label = `${isActive ? '✅ ' : ''}${rpc.name}`;
+            return [{ text: label, callback_data: `sui_rpc_sel_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'sui_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '📡 PILIH RPC SUI:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async startAddSuiRpcFlow(chatId) {
+        this.userStates.set(chatId, { action: 'awaiting_sui_rpc_add', step: 'name' });
+        this.bot.sendMessage(chatId,
+            `➕ *TAMBAH RPC SUI*\n\n` +
+            `Masukkan nama label untuk RPC ini (contoh: "Sui Mainnet"):`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    async processAddSuiRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state) return;
+
+        if (state.step === 'name') {
+            state.suiRpcName = input.trim();
+            state.step = 'url';
+            this.userStates.set(chatId, state);
+            this.bot.sendMessage(chatId,
+                `✅ Nama: *${state.suiRpcName}*\n\n` +
+                `Sekarang masukkan URL RPC Sui:\n` +
+                `(contoh: \`https://fullnode.mainnet.sui.io:443\`)`,
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+
+        if (state.step === 'url') {
+            const url = input.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+
+            const key = cryptoApp.addSuiRpc(url, state.suiRpcName);
+            this.userStates.delete(chatId);
+
+            this.bot.sendMessage(chatId,
+                `✅ RPC Sui berhasil ditambahkan!\n\n` +
+                `🏷️ Nama: *${state.suiRpcName}*\n` +
+                `🌐 URL: \`${url}\``,
+                { parse_mode: 'Markdown' }
+            );
+
+            await this.showSuiRpcMenu(cryptoApp, chatId);
+        }
+    }
+
+    async showSuiRpcDeleteMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedSuiRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC Sui yang bisa dihapus.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'sui_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `🗑️ ${rpc.name}`, callback_data: `sui_rpc_del_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Batal', callback_data: 'sui_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '🗑️ PILIH RPC SUI UNTUK DIHAPUS:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showSuiRpcEditMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedSuiRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC Sui yang bisa diedit.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'sui_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `✏️ ${rpc.name}`, callback_data: `sui_rpc_edit_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'sui_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '✏️ PILIH RPC SUI UNTUK DIEDIT:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showSuiRpcEditPropMenu(cryptoApp, chatId, rpcKey) {
+        const rpc = cryptoApp.savedSuiRpcs[rpcKey];
+        if (!rpc) {
+            this.bot.sendMessage(chatId, '❌ RPC tidak ditemukan.');
+            await this.showSuiRpcEditMenu(cryptoApp, chatId);
+            return;
+        }
+
+        const text = `✏️ *EDIT RPC SUI: ${rpc.name}*\n\n` +
+            `• *URL:* \`${rpc.rpc}\`\n\n` +
+            `Pilih properti yang ingin diubah:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '🏷️ Ubah Nama', callback_data: `sui_rpc_editprop_name_${rpcKey}` }],
+                    [{ text: '🌐 Ubah URL', callback_data: `sui_rpc_editprop_url_${rpcKey}` }],
+                    [{ text: '🔙 Kembali', callback_data: 'sui_rpc_edit_menu' }]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async processEditSuiRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state || !state.suiEditKey || !state.suiEditProp) return;
+
+        const rpcKey = state.suiEditKey;
+        const prop = state.suiEditProp;
+        const value = input.trim();
+
+        if (prop === 'name') {
+            cryptoApp.updateSuiRpcProperty(rpcKey, 'name', value);
+            if (cryptoApp.savedSuiRpcs[rpcKey]?.rpc === cryptoApp.currentSuiRpc) {
+                cryptoApp.currentSuiRpcName = value;
+                cryptoApp.saveSuiRpcConfig();
+            }
+        } else if (prop === 'rpc') {
+            if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+            const oldRpc = cryptoApp.savedSuiRpcs[rpcKey]?.rpc;
+            cryptoApp.updateSuiRpcProperty(rpcKey, 'rpc', value);
+            if (oldRpc === cryptoApp.currentSuiRpc) {
+                cryptoApp.currentSuiRpc = value;
+                cryptoApp.saveSuiRpcConfig();
+            }
+        }
+
+        this.userStates.delete(chatId);
+        this.bot.sendMessage(chatId, `✅ Properti RPC Sui berhasil diperbarui!`);
+        await this.showSuiRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+    }
+
+    async showSuiRpcInfo(cryptoApp, chatId) {
+        const activeRpc = cryptoApp.currentSuiRpcName || 'Tidak ada';
+        const url = cryptoApp.currentSuiRpc || 'Belum diatur';
+
+        const text = `🟡 *SUI RPC DETAIL*\n\n` +
+            `• *Label RPC:* \`${activeRpc}\`\n` +
+            `• *URL Endpoint:* \`${url}\`\n\n` +
+            `🕒 ${new Date().toLocaleString()}`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'sui_rpc_menu' }]]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async getSuiBalanceStats(cryptoApp, chatId) {
+        if (!cryptoApp.wallet) {
+            this.bot.sendMessage(chatId, '❌ Wallet belum setup!');
+            return;
+        }
+
+        try {
+            const wallets = await cryptoApp.loadWallets();
+            const walletData = wallets[cryptoApp.wallet.address];
+
+            if (!walletData || !walletData.mnemonic) {
+                this.bot.sendMessage(chatId, '⚠️ Wallet saat ini tidak memiliki alamat Sui (diimpor via Private Key).');
+                return;
+            }
+
+            await this.bot.sendMessage(chatId, '🔄 Mengecek balance Sui...');
+
+            const suiAddress = cryptoApp.deriveSuiAddress(walletData.mnemonic);
+            if (!suiAddress) {
+                this.bot.sendMessage(chatId, '❌ Gagal menurunkan alamat Sui dari mnemonic.');
+                return;
+            }
+
+            const suiRpcUrl = cryptoApp.currentSuiRpc || 'https://fullnode.mainnet.sui.io:443';
+
+            const { SuiClient, getFullnodeUrl } = require('@mysten/sui/client');
+            const client = new SuiClient({ url: suiRpcUrl });
+
+            let balanceMist = 0;
+            try {
+                const balanceResult = await client.getBalance({ owner: suiAddress });
+                balanceMist = parseInt(balanceResult.totalBalance) || 0;
+            } catch (e) {
+                balanceMist = 0;
+            }
+
+            const balanceSui = balanceMist / 1e9;
+
+            const message =
+                `📊 SUI BALANCE INFO\n\n` +
+                `💳 Sui Wallet: \`${suiAddress}\`\n` +
+                `💰 Balance: ${balanceSui} SUI\n` +
+                `🌐 Sui RPC: ${cryptoApp.currentSuiRpcName || 'Sui Mainnet'}\n` +
+                `🔗 Endpoint: \`${suiRpcUrl}\`\n` +
+                `🕒 ${new Date().toLocaleString()}`;
+
+            this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+        }
+    }
+
+    // ===================================
+    // 💎 TON RPC MANAGEMENT (TELEGRAM UI)
+    // ===================================
+
+    async showTonRpcMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const activeRpc = cryptoApp.currentTonRpcName || 'Tidak ada';
+        const text = `💎 *TON RPC MANAGEMENT*\n\n` +
+            `• *RPC Aktif:* \`${activeRpc}\`\n` +
+            `• *Endpoint:* \`${cryptoApp.currentTonRpc || 'Belum diatur'}\`\n\n` +
+            `Silakan pilih opsi di bawah untuk mengelola RPC TON Anda:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📡 Pilih RPC TON', callback_data: 'ton_rpc_select' },
+                        { text: '➕ Tambah RPC TON', callback_data: 'ton_rpc_add' }
+                    ],
+                    [
+                        { text: '✏️ Edit RPC TON', callback_data: 'ton_rpc_edit_menu' },
+                        { text: '🗑️ Hapus RPC TON', callback_data: 'ton_rpc_delete_menu' }
+                    ],
+                    [
+                        { text: 'ℹ️ Info RPC TON', callback_data: 'ton_rpc_info' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'rpc_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async showTonRpcList(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedTonRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '➕ Tambah RPC TON', callback_data: 'ton_rpc_add' }],
+                        [{ text: '🔙 Batal', callback_data: 'ton_rpc_menu' }]
+                    ]
+                }
+            };
+            this.bot.sendMessage(chatId, '📭 Belum ada RPC TON tersimpan.', menu);
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            const isActive = rpc.rpc === cryptoApp.currentTonRpc;
+            const label = `${isActive ? '✅ ' : ''}${rpc.name}`;
+            return [{ text: label, callback_data: `ton_rpc_sel_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'ton_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '📡 PILIH RPC TON:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async startAddTonRpcFlow(chatId) {
+        this.userStates.set(chatId, { action: 'awaiting_ton_rpc_add', step: 'name' });
+        this.bot.sendMessage(chatId,
+            `➕ *TAMBAH RPC TON*\n\n` +
+            `Masukkan nama label untuk RPC ini (contoh: "TON Mainnet"):`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    async processAddTonRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state) return;
+
+        if (state.step === 'name') {
+            state.tonRpcName = input.trim();
+            state.step = 'url';
+            this.userStates.set(chatId, state);
+            this.bot.sendMessage(chatId,
+                `✅ Nama: *${state.tonRpcName}*\n\n` +
+                `Sekarang masukkan URL RPC TON:\n` +
+                `(contoh: \`https://toncenter.com/api/v2/jsonRPC\`)`,
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+
+        if (state.step === 'url') {
+            const url = input.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+
+            const key = cryptoApp.addTonRpc(url, state.tonRpcName);
+            this.userStates.delete(chatId);
+
+            this.bot.sendMessage(chatId,
+                `✅ RPC TON berhasil ditambahkan!\n\n` +
+                `🏷️ Nama: *${state.tonRpcName}*\n` +
+                `🌐 URL: \`${url}\``,
+                { parse_mode: 'Markdown' }
+            );
+
+            await this.showTonRpcMenu(cryptoApp, chatId);
+        }
+    }
+
+    async showTonRpcDeleteMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedTonRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC TON yang bisa dihapus.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'ton_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `🗑️ ${rpc.name}`, callback_data: `ton_rpc_del_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Batal', callback_data: 'ton_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '🗑️ PILIH RPC TON UNTUK DIHAPUS:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showTonRpcEditMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedTonRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC TON yang bisa diedit.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'ton_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `✏️ ${rpc.name}`, callback_data: `ton_rpc_edit_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'ton_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '✏️ PILIH RPC TON UNTUK DIEDIT:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showTonRpcEditPropMenu(cryptoApp, chatId, rpcKey) {
+        const rpc = cryptoApp.savedTonRpcs[rpcKey];
+        if (!rpc) {
+            this.bot.sendMessage(chatId, '❌ RPC tidak ditemukan.');
+            await this.showTonRpcEditMenu(cryptoApp, chatId);
+            return;
+        }
+
+        const text = `✏️ *EDIT RPC TON: ${rpc.name}*\n\n` +
+            `• *URL:* \`${rpc.rpc}\`\n\n` +
+            `Pilih properti yang ingin diubah:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '🏷️ Ubah Nama', callback_data: `ton_rpc_editprop_name_${rpcKey}` }],
+                    [{ text: '🌐 Ubah URL', callback_data: `ton_rpc_editprop_url_${rpcKey}` }],
+                    [{ text: '🔙 Kembali', callback_data: 'ton_rpc_edit_menu' }]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async processEditTonRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state || !state.tonEditKey || !state.tonEditProp) return;
+
+        const rpcKey = state.tonEditKey;
+        const prop = state.tonEditProp;
+        const value = input.trim();
+
+        if (prop === 'name') {
+            cryptoApp.updateTonRpcProperty(rpcKey, 'name', value);
+            if (cryptoApp.savedTonRpcs[rpcKey]?.rpc === cryptoApp.currentTonRpc) {
+                cryptoApp.currentTonRpcName = value;
+                cryptoApp.saveTonRpcConfig();
+            }
+        } else if (prop === 'rpc') {
+            if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+            const oldRpc = cryptoApp.savedTonRpcs[rpcKey]?.rpc;
+            cryptoApp.updateTonRpcProperty(rpcKey, 'rpc', value);
+            if (oldRpc === cryptoApp.currentTonRpc) {
+                cryptoApp.currentTonRpc = value;
+                cryptoApp.saveTonRpcConfig();
+            }
+        }
+
+        this.userStates.delete(chatId);
+        this.bot.sendMessage(chatId, `✅ Properti RPC TON berhasil diperbarui!`);
+        await this.showTonRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+    }
+
+    async showTonRpcInfo(cryptoApp, chatId) {
+        const activeRpc = cryptoApp.currentTonRpcName || 'Tidak ada';
+        const url = cryptoApp.currentTonRpc || 'Belum diatur';
+
+        const text = `💎 *TON RPC DETAIL*\n\n` +
+            `• *Label RPC:* \`${activeRpc}\`\n` +
+            `• *URL Endpoint:* \`${url}\`\n\n` +
+            `🕒 ${new Date().toLocaleString()}`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'ton_rpc_menu' }]]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async getTonBalanceStats(cryptoApp, chatId) {
+        if (!cryptoApp.wallet) {
+            this.bot.sendMessage(chatId, '❌ Wallet belum setup!');
+            return;
+        }
+
+        try {
+            const wallets = await cryptoApp.loadWallets();
+            const walletData = wallets[cryptoApp.wallet.address];
+
+            if (!walletData || !walletData.mnemonic) {
+                this.bot.sendMessage(chatId, '⚠️ Wallet saat ini tidak memiliki alamat TON (diimpor via Private Key).');
+                return;
+            }
+
+            await this.bot.sendMessage(chatId, '🔄 Mengecek balance TON...');
+
+            const tonAddress = await cryptoApp.deriveTonAddress(walletData.mnemonic);
+            if (!tonAddress) {
+                this.bot.sendMessage(chatId, '❌ Gagal menurunkan alamat TON dari mnemonic.');
+                return;
+            }
+
+            const tonRpcUrl = cryptoApp.currentTonRpc || 'https://toncenter.com/api/v2/jsonRPC';
+
+            const { TonClient, fromNano } = require('@ton/ton');
+            const client = new TonClient({ endpoint: tonRpcUrl });
+
+            let balanceNano = 0n;
+            try {
+                const { Address } = require('@ton/core');
+                const addrParsed = Address.parse(tonAddress);
+                const balanceResult = await client.getBalance(addrParsed);
+                balanceNano = balanceResult || 0n;
+            } catch (e) {
+                balanceNano = 0n;
+            }
+
+            const balanceTon = fromNano(balanceNano);
+
+            const message =
+                `📊 TON BALANCE INFO\n\n` +
+                `💳 TON Wallet: \`${tonAddress}\`\n` +
+                `💰 Balance: ${balanceTon} TON\n` +
+                `🌐 TON RPC: ${cryptoApp.currentTonRpcName || 'TON Center'}\n` +
+                `🔗 Endpoint: \`${tonRpcUrl}\`\n` +
+                `🕒 ${new Date().toLocaleString()}`;
+
+            this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+        }
+    }
+
+    async showNearRpcMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const activeRpc = cryptoApp.currentNearRpcName || 'Tidak ada';
+        const text = `🌿 *NEAR RPC MANAGEMENT*\n\n` +
+            `• *RPC Aktif:* \`${activeRpc}\`\n` +
+            `• *Endpoint:* \`${cryptoApp.currentNearRpc || 'Belum diatur'}\`\n\n` +
+            `Silakan pilih opsi di bawah untuk mengelola RPC NEAR Anda:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📡 Pilih RPC NEAR', callback_data: 'near_rpc_select' },
+                        { text: '➕ Tambah RPC NEAR', callback_data: 'near_rpc_add' }
+                    ],
+                    [
+                        { text: '✏️ Edit RPC NEAR', callback_data: 'near_rpc_edit_menu' },
+                        { text: '🗑️ Hapus RPC NEAR', callback_data: 'near_rpc_delete_menu' }
+                    ],
+                    [
+                        { text: 'ℹ️ Info RPC NEAR', callback_data: 'near_rpc_info' }
+                    ],
+                    [
+                        { text: '🔙 Kembali', callback_data: 'rpc_menu' }
+                    ]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async showNearRpcList(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedNearRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            const menu = {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '➕ Tambah RPC NEAR', callback_data: 'near_rpc_add' }],
+                        [{ text: '🔙 Batal', callback_data: 'near_rpc_menu' }]
+                    ]
+                }
+            };
+            this.bot.sendMessage(chatId, '📭 Belum ada RPC NEAR tersimpan.', menu);
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            const isActive = rpc.rpc === cryptoApp.currentNearRpc;
+            const label = `${isActive ? '✅ ' : ''}${rpc.name}`;
+            return [{ text: label, callback_data: `near_rpc_sel_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'near_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '📡 PILIH RPC NEAR:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async startAddNearRpcFlow(chatId) {
+        this.userStates.set(chatId, { action: 'awaiting_near_rpc_add', step: 'name' });
+        this.bot.sendMessage(chatId,
+            `➕ *TAMBAH RPC NEAR*\n\n` +
+            `Masukkan nama label untuk RPC ini (contoh: "NEAR Mainnet"):`,
+            { parse_mode: 'Markdown' }
+        );
+    }
+
+    async processAddNearRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state) return;
+
+        if (state.step === 'name') {
+            state.nearRpcName = input.trim();
+            state.step = 'url';
+            this.userStates.set(chatId, state);
+            this.bot.sendMessage(chatId,
+                `✅ Nama: *${state.nearRpcName}*\n\n` +
+                `Sekarang masukkan URL RPC NEAR:\n` +
+                `(contoh: \`https://rpc.mainnet.near.org\`)`,
+                { parse_mode: 'Markdown' }
+            );
+            return;
+        }
+
+        if (state.step === 'url') {
+            const url = input.trim();
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+
+            const key = cryptoApp.addNearRpc(url, state.nearRpcName);
+            this.userStates.delete(chatId);
+
+            this.bot.sendMessage(chatId,
+                `✅ RPC NEAR berhasil ditambahkan!\n\n` +
+                `🏷️ Nama: *${state.nearRpcName}*\n` +
+                `🌐 URL: \`${url}\``,
+                { parse_mode: 'Markdown' }
+            );
+
+            await this.showNearRpcMenu(cryptoApp, chatId);
+        }
+    }
+
+    async showNearRpcDeleteMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedNearRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC NEAR yang bisa dihapus.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'near_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `🗑️ ${rpc.name}`, callback_data: `near_rpc_del_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Batal', callback_data: 'near_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '🗑️ PILIH RPC NEAR UNTUK DIHAPUS:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showNearRpcEditMenu(cryptoApp, chatId) {
+        if (!cryptoApp) return;
+
+        const savedRpcs = cryptoApp.savedNearRpcs || {};
+        const keys = Object.keys(savedRpcs);
+
+        if (keys.length === 0) {
+            this.bot.sendMessage(chatId, '📭 Tidak ada RPC NEAR yang bisa diedit.', {
+                reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'near_rpc_menu' }]] }
+            });
+            return;
+        }
+
+        const buttons = keys.map(key => {
+            const rpc = savedRpcs[key];
+            return [{ text: `✏️ ${rpc.name}`, callback_data: `near_rpc_edit_${key}` }];
+        });
+
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'near_rpc_menu' }]);
+
+        this.bot.sendMessage(chatId, '✏️ PILIH RPC NEAR UNTUK DIEDIT:', {
+            reply_markup: { inline_keyboard: buttons }
+        });
+    }
+
+    async showNearRpcEditPropMenu(cryptoApp, chatId, rpcKey) {
+        const rpc = cryptoApp.savedNearRpcs[rpcKey];
+        if (!rpc) {
+            this.bot.sendMessage(chatId, '❌ RPC tidak ditemukan.');
+            await this.showNearRpcEditMenu(cryptoApp, chatId);
+            return;
+        }
+
+        const text = `✏️ *EDIT RPC NEAR: ${rpc.name}*\n\n` +
+            `• *URL:* \`${rpc.rpc}\`\n\n` +
+            `Pilih properti yang ingin diubah:`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '🏷️ Ubah Nama', callback_data: `near_rpc_editprop_name_${rpcKey}` }],
+                    [{ text: '🌐 Ubah URL', callback_data: `near_rpc_editprop_url_${rpcKey}` }],
+                    [{ text: '🔙 Kembali', callback_data: 'near_rpc_edit_menu' }]
+                ]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async processEditNearRpc(cryptoApp, chatId, input) {
+        const state = this.userStates.get(chatId);
+        if (!state || !state.nearEditKey || !state.nearEditProp) return;
+
+        const rpcKey = state.nearEditKey;
+        const prop = state.nearEditProp;
+        const value = input.trim();
+
+        if (prop === 'name') {
+            cryptoApp.updateNearRpcProperty(rpcKey, 'name', value);
+            if (cryptoApp.savedNearRpcs[rpcKey]?.rpc === cryptoApp.currentNearRpc) {
+                cryptoApp.currentNearRpcName = value;
+                cryptoApp.saveNearRpcConfig();
+            }
+        } else if (prop === 'rpc') {
+            if (!value.startsWith('http://') && !value.startsWith('https://')) {
+                this.bot.sendMessage(chatId, '❌ URL harus diawali http:// atau https://');
+                return;
+            }
+            const oldRpc = cryptoApp.savedNearRpcs[rpcKey]?.rpc;
+            cryptoApp.updateNearRpcProperty(rpcKey, 'rpc', value);
+            if (oldRpc === cryptoApp.currentNearRpc) {
+                cryptoApp.currentNearRpc = value;
+                cryptoApp.saveNearRpcConfig();
+            }
+        }
+
+        this.userStates.delete(chatId);
+        this.bot.sendMessage(chatId, `✅ Properti RPC NEAR berhasil diperbarui!`);
+        await this.showNearRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+    }
+
+    async showNearRpcInfo(cryptoApp, chatId) {
+        const activeRpc = cryptoApp.currentNearRpcName || 'Tidak ada';
+        const url = cryptoApp.currentNearRpc || 'Belum diatur';
+
+        const text = `🌿 *NEAR RPC DETAIL*\n\n` +
+            `• *Label RPC:* \`${activeRpc}\`\n` +
+            `• *URL Endpoint:* \`${url}\`\n\n` +
+            `🕒 ${new Date().toLocaleString()}`;
+
+        const menu = {
+            parse_mode: 'Markdown',
+            reply_markup: {
+                inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'near_rpc_menu' }]]
+            }
+        };
+
+        this.bot.sendMessage(chatId, text, menu);
+    }
+
+    async getNearBalanceStats(cryptoApp, chatId) {
+        if (!cryptoApp.wallet) {
+            this.bot.sendMessage(chatId, '❌ Wallet belum setup!');
+            return;
+        }
+
+        try {
+            const wallets = await cryptoApp.loadWallets();
+            const walletData = wallets[cryptoApp.wallet.address];
+
+            if (!walletData || !walletData.mnemonic) {
+                this.bot.sendMessage(chatId, '⚠️ Wallet saat ini tidak memiliki alamat NEAR (diimpor via Private Key).');
+                return;
+            }
+
+            await this.bot.sendMessage(chatId, '🔄 Mengecek balance NEAR...');
+
+            const nearAddress = cryptoApp.deriveNearAddress(walletData.mnemonic);
+            if (!nearAddress) {
+                this.bot.sendMessage(chatId, '❌ Gagal menurunkan alamat NEAR dari mnemonic.');
+                return;
+            }
+
+            const nearRpcUrl = cryptoApp.currentNearRpc || 'https://rpc.mainnet.near.org';
+
+            let balanceNear = '0';
+            try {
+                const res = await fetch(nearRpcUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        id: 'dontcare',
+                        method: 'query',
+                        params: {
+                            request_type: 'view_account',
+                            finality: 'final',
+                            account_id: nearAddress
+                        }
+                    })
+                });
+                const data = await res.json();
+                if (data && data.result && data.result.amount) {
+                    const amount = data.result.amount;
+                    if (amount === '0') {
+                        balanceNear = '0';
+                    } else {
+                        const len = amount.length;
+                        if (len <= 24) {
+                            const padding = '0'.repeat(24 - len);
+                            balanceNear = ('0.' + padding + amount).replace(/\.?0+$/, '');
+                        } else {
+                            const intPart = amount.slice(0, len - 24);
+                            const decPart = amount.slice(len - 24);
+                            balanceNear = (intPart + '.' + decPart).replace(/\.?0+$/, '');
+                        }
+                    }
+                }
+            } catch (e) {
+                balanceNear = '0';
+            }
+
+            const message =
+                `📊 NEAR BALANCE INFO\n\n` +
+                `💳 NEAR Wallet: \`${nearAddress}\`\n` +
+                `💰 Balance: ${balanceNear} NEAR\n` +
+                `🌐 NEAR RPC: ${cryptoApp.currentNearRpcName || 'NEAR Mainnet'}\n` +
+                `🔗 Endpoint: \`${nearRpcUrl}\`\n` +
+                `🕒 ${new Date().toLocaleString()}`;
+
+            this.bot.sendMessage(chatId, message, { parse_mode: 'Markdown' });
+
+        } catch (error) {
+            this.bot.sendMessage(chatId, `❌ Error: ${error.message}`);
+        }
     }
 
     async showGasRpcSelection(cryptoApp, chatId, page = 0) {
@@ -3807,7 +5606,7 @@ class TelegramFullController {
             }
             if (navRow.length > 0) buttons.push(navRow);
 
-            buttons.push([{ text: '🔙 Kembali', callback_data: 'rpc_menu' }]);
+            buttons.push([{ text: '🔙 Kembali', callback_data: 'rpc_evm_menu' }]);
 
             this.bot.sendMessage(chatId, message, {
                 reply_markup: { inline_keyboard: buttons }
@@ -4022,7 +5821,7 @@ class TelegramFullController {
             }
             if (navRow.length > 0) buttons.push(navRow);
 
-            buttons.push([{ text: '🔙 Batal', callback_data: 'rpc_menu' }]);
+            buttons.push([{ text: '🔙 Batal', callback_data: 'rpc_evm_menu' }]);
 
             this.bot.sendMessage(chatId, message, {
                 reply_markup: { inline_keyboard: buttons }
@@ -4313,7 +6112,7 @@ class TelegramFullController {
             }
             if (navRow.length > 0) buttons.push(navRow);
 
-            buttons.push([{ text: '🔙 Batal', callback_data: 'rpc_menu' }]);
+            buttons.push([{ text: '🔙 Batal', callback_data: 'rpc_evm_menu' }]);
 
             this.bot.sendMessage(chatId, message, {
                 reply_markup: { inline_keyboard: buttons }
@@ -4388,7 +6187,7 @@ class TelegramFullController {
             }
             if (navRow.length > 0) buttons.push(navRow);
 
-            buttons.push([{ text: '🔙 Kembali', callback_data: 'rpc_menu' }]);
+            buttons.push([{ text: '🔙 Kembali', callback_data: 'rpc_evm_menu' }]);
 
             this.bot.sendMessage(chatId, message, {
                 reply_markup: { inline_keyboard: buttons }
@@ -5350,6 +7149,36 @@ class TelegramFullController {
             case 'awaiting_rpc_edit':
                 await this.processEditRpc(cryptoApp, chatId, text, userState);
                 break;
+            case 'awaiting_solana_rpc_add':
+                await this.processAddSolanaRpc(cryptoApp, chatId, text, userState);
+                break;
+            case 'awaiting_solana_rpc_edit':
+                await this.processEditSolanaRpc(cryptoApp, chatId, text, userState);
+                break;
+            case 'awaiting_aptos_rpc_add':
+                await this.processAddAptosRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_aptos_rpc_edit':
+                await this.processEditAptosRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_sui_rpc_add':
+                await this.processAddSuiRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_sui_rpc_edit':
+                await this.processEditSuiRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_ton_rpc_add':
+                await this.processAddTonRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_ton_rpc_edit':
+                await this.processEditTonRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_near_rpc_add':
+                await this.processAddNearRpc(cryptoApp, chatId, text);
+                break;
+            case 'awaiting_near_rpc_edit':
+                await this.processEditNearRpc(cryptoApp, chatId, text);
+                break;
             case 'awaiting_delay_input':
                 await this.processDelayInput(cryptoApp, chatId, text, msg);
                 break;
@@ -5464,7 +7293,7 @@ class TelegramFullController {
 
         // Global: hentikan loading spinner di semua tombol sebelum proses apapun
         // (kecuali dapp_approval_toggle yang punya answerCallbackQuery sendiri dengan custom text)
-        if (data !== 'dapp_approval_toggle' && data !== 'dapp_approval_toggle_new' && data !== 'dapp_connection_info_alert' && data !== 'auto_approve_menu' && !data.startsWith('auto_approve_rpc_') && !data.startsWith('dapp_connect_approve_') && !data.startsWith('dapp_connect_reject_') && !data.startsWith('tx_approve_') && !data.startsWith('tx_reject_') && !data.startsWith('rpc_inject_usedbyother_')) {
+        if (data !== 'dapp_approval_toggle' && data !== 'dapp_approval_toggle_new' && data !== 'dapp_connection_info_alert' && data !== 'auto_approve_menu' && !data.startsWith('auto_approve_rpc_') && !data.startsWith('auto_approve_solrpc_') && !data.startsWith('auto_approve_chain_') && !data.startsWith('dapp_connect_approve_') && !data.startsWith('dapp_connect_reject_') && !data.startsWith('tx_approve_') && !data.startsWith('tx_reject_') && !data.startsWith('rpc_inject_usedbyother_')) {
             this.bot.answerCallbackQuery(query.id).catch(() => {});
         }
 
@@ -5525,7 +7354,25 @@ class TelegramFullController {
                 await this.checkBalance(cryptoApp, chatId);
             }
             else if (data === 'wallet_stats') {
+                this.showBalanceNetworkSelectMenu(cryptoApp, chatId);
+            }
+            else if (data === 'balance_evm_run') {
                 await this.getTransactionStats(cryptoApp, chatId);
+            }
+            else if (data === 'balance_solana_run') {
+                await this.getSolanaTransactionStats(cryptoApp, chatId);
+            }
+            else if (data === 'balance_aptos_run') {
+                await this.getAptosBalanceStats(cryptoApp, chatId);
+            }
+            else if (data === 'balance_sui_run') {
+                await this.getSuiBalanceStats(cryptoApp, chatId);
+            }
+            else if (data === 'balance_ton_run') {
+                await this.getTonBalanceStats(cryptoApp, chatId);
+            }
+            else if (data === 'balance_near_run') {
+                await this.getNearBalanceStats(cryptoApp, chatId);
             }
             else if (data.startsWith('wallet_select_')) {
                 const address = data.replace('wallet_select_', '');
@@ -5592,6 +7439,251 @@ class TelegramFullController {
             // RPC
             else if (data === 'rpc_menu') {
                 this.showRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'rpc_evm_menu') {
+                this.showEvmRpcMenu(cryptoApp, chatId);
+            }
+            // Solana RPC Callbacks
+            else if (data === 'solana_rpc_menu') {
+                await this.showSolanaRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'solana_rpc_select') {
+                await this.showSolanaRpcList(cryptoApp, chatId);
+            }
+            else if (data === 'solana_rpc_add') {
+                await this.startAddSolanaRpcFlow(cryptoApp, chatId, 1);
+            }
+            else if (data === 'solana_rpc_info') {
+                await this.showSolanaRpcInfo(cryptoApp, chatId);
+            }
+            else if (data === 'solana_rpc_delete_menu') {
+                await this.showSolanaRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data === 'solana_rpc_delete_active') {
+                this.bot.answerCallbackQuery(query.id, { text: '⚠️ RPC aktif tidak bisa dihapus!', show_alert: true });
+            }
+            else if (data.startsWith('solana_rpc_delete_exec_')) {
+                const rpcKey = data.replace('solana_rpc_delete_exec_', '');
+                cryptoApp.deleteSolanaRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: '🗑️ RPC Solana berhasil dihapus.' });
+                await this.showSolanaRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('solana_rpc_use_')) {
+                const rpcKey = data.replace('solana_rpc_use_', '');
+                cryptoApp.selectSolanaRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: `🟢 Aktif: ${cryptoApp.currentSolanaRpcName}` });
+                await this.showSolanaRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'solana_rpc_edit_menu') {
+                await this.showSolanaRpcEditMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('solana_rpc_edit_select_')) {
+                const rpcKey = data.replace('solana_rpc_edit_select_', '');
+                await this.showSolanaRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            else if (data.startsWith('solana_rpc_edit_prop_name_')) {
+                const rpcKey = data.replace('solana_rpc_edit_prop_name_', '');
+                await this.startEditSolanaRpcInput(cryptoApp, chatId, rpcKey, 'name');
+            }
+            else if (data.startsWith('solana_rpc_edit_prop_url_')) {
+                const rpcKey = data.replace('solana_rpc_edit_prop_url_', '');
+                await this.startEditSolanaRpcInput(cryptoApp, chatId, rpcKey, 'url');
+            }
+            else if (data.startsWith('solana_rpc_setfee_')) {
+                const parts = data.replace('solana_rpc_setfee_', '').split('_');
+                const feeLevel = parts[0];
+                const rpcKey = parts.slice(1).join('_');
+                cryptoApp.updateSolanaRpcProperty(rpcKey, 'priorityFee', feeLevel);
+                this.bot.answerCallbackQuery(query.id, { text: `⚡ Priority Fee: ${feeLevel}` });
+                await this.showSolanaRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            else if (data.startsWith('solana_rpc_setcommit_')) {
+                const parts = data.replace('solana_rpc_setcommit_', '').split('_');
+                const commitLevel = parts[0];
+                const rpcKey = parts.slice(1).join('_');
+                cryptoApp.updateSolanaRpcProperty(rpcKey, 'commitment', commitLevel);
+                this.bot.answerCallbackQuery(query.id, { text: `🔒 Commitment: ${commitLevel}` });
+                await this.showSolanaRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            // Aptos RPC Callbacks
+            else if (data === 'aptos_rpc_menu') {
+                await this.showAptosRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'aptos_rpc_select') {
+                await this.showAptosRpcList(cryptoApp, chatId);
+            }
+            else if (data === 'aptos_rpc_add') {
+                await this.startAddAptosRpcFlow(chatId);
+            }
+            else if (data === 'aptos_rpc_info') {
+                await this.showAptosRpcInfo(cryptoApp, chatId);
+            }
+            else if (data === 'aptos_rpc_delete_menu') {
+                await this.showAptosRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('aptos_rpc_del_')) {
+                const rpcKey = data.replace('aptos_rpc_del_', '');
+                cryptoApp.deleteAptosRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: '🗑️ RPC Aptos berhasil dihapus.' });
+                await this.showAptosRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('aptos_rpc_sel_')) {
+                const rpcKey = data.replace('aptos_rpc_sel_', '');
+                cryptoApp.selectAptosRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: `🟢 Aktif: ${cryptoApp.currentAptosRpcName}` });
+                await this.showAptosRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'aptos_rpc_edit_menu') {
+                await this.showAptosRpcEditMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('aptos_rpc_edit_')) {
+                const rpcKey = data.replace('aptos_rpc_edit_', '');
+                await this.showAptosRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            else if (data.startsWith('aptos_rpc_editprop_name_')) {
+                const rpcKey = data.replace('aptos_rpc_editprop_name_', '');
+                this.userStates.set(chatId, { action: 'awaiting_aptos_rpc_edit', aptosEditKey: rpcKey, aptosEditProp: 'name' });
+                this.bot.sendMessage(chatId, '🏷️ Masukkan nama baru untuk RPC Aptos ini:');
+            }
+            else if (data.startsWith('aptos_rpc_editprop_url_')) {
+                const rpcKey = data.replace('aptos_rpc_editprop_url_', '');
+                this.userStates.set(chatId, { action: 'awaiting_aptos_rpc_edit', aptosEditKey: rpcKey, aptosEditProp: 'rpc' });
+                this.bot.sendMessage(chatId, '🌐 Masukkan URL baru untuk RPC Aptos ini:');
+            }
+            // Sui RPC Callbacks
+            else if (data === 'sui_rpc_menu') {
+                await this.showSuiRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'sui_rpc_select') {
+                await this.showSuiRpcList(cryptoApp, chatId);
+            }
+            else if (data === 'sui_rpc_add') {
+                await this.startAddSuiRpcFlow(chatId);
+            }
+            else if (data === 'sui_rpc_info') {
+                await this.showSuiRpcInfo(cryptoApp, chatId);
+            }
+            else if (data === 'sui_rpc_delete_menu') {
+                await this.showSuiRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('sui_rpc_del_')) {
+                const rpcKey = data.replace('sui_rpc_del_', '');
+                cryptoApp.deleteSuiRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: '🗑️ RPC Sui berhasil dihapus.' });
+                await this.showSuiRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('sui_rpc_sel_')) {
+                const rpcKey = data.replace('sui_rpc_sel_', '');
+                cryptoApp.selectSuiRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: `🟢 Aktif: ${cryptoApp.currentSuiRpcName}` });
+                await this.showSuiRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'sui_rpc_edit_menu') {
+                await this.showSuiRpcEditMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('sui_rpc_edit_')) {
+                const rpcKey = data.replace('sui_rpc_edit_', '');
+                await this.showSuiRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            else if (data.startsWith('sui_rpc_editprop_name_')) {
+                const rpcKey = data.replace('sui_rpc_editprop_name_', '');
+                this.userStates.set(chatId, { action: 'awaiting_sui_rpc_edit', suiEditKey: rpcKey, suiEditProp: 'name' });
+                this.bot.sendMessage(chatId, '🏷️ Masukkan nama baru untuk RPC Sui ini:');
+            }
+            else if (data.startsWith('sui_rpc_editprop_url_')) {
+                const rpcKey = data.replace('sui_rpc_editprop_url_', '');
+                this.userStates.set(chatId, { action: 'awaiting_sui_rpc_edit', suiEditKey: rpcKey, suiEditProp: 'rpc' });
+                this.bot.sendMessage(chatId, '🌐 Masukkan URL baru untuk RPC Sui ini:');
+            }
+            // TON RPC Callbacks
+            else if (data === 'ton_rpc_menu') {
+                await this.showTonRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'ton_rpc_select') {
+                await this.showTonRpcList(cryptoApp, chatId);
+            }
+            else if (data === 'ton_rpc_add') {
+                await this.startAddTonRpcFlow(chatId);
+            }
+            else if (data === 'ton_rpc_info') {
+                await this.showTonRpcInfo(cryptoApp, chatId);
+            }
+            else if (data === 'ton_rpc_delete_menu') {
+                await this.showTonRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('ton_rpc_del_')) {
+                const rpcKey = data.replace('ton_rpc_del_', '');
+                cryptoApp.deleteTonRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: '🗑️ RPC TON berhasil dihapus.' });
+                await this.showTonRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('ton_rpc_sel_')) {
+                const rpcKey = data.replace('ton_rpc_sel_', '');
+                cryptoApp.selectTonRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: `🟢 Aktif: ${cryptoApp.currentTonRpcName}` });
+                await this.showTonRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'ton_rpc_edit_menu') {
+                await this.showTonRpcEditMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('ton_rpc_edit_')) {
+                const rpcKey = data.replace('ton_rpc_edit_', '');
+                await this.showTonRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            else if (data.startsWith('ton_rpc_editprop_name_')) {
+                const rpcKey = data.replace('ton_rpc_editprop_name_', '');
+                this.userStates.set(chatId, { action: 'awaiting_ton_rpc_edit', tonEditKey: rpcKey, tonEditProp: 'name' });
+                this.bot.sendMessage(chatId, '🏷️ Masukkan nama baru untuk RPC TON ini:');
+            }
+            else if (data.startsWith('ton_rpc_editprop_url_')) {
+                const rpcKey = data.replace('ton_rpc_editprop_url_', '');
+                this.userStates.set(chatId, { action: 'awaiting_ton_rpc_edit', tonEditKey: rpcKey, tonEditProp: 'rpc' });
+                this.bot.sendMessage(chatId, '🌐 Masukkan URL baru untuk RPC TON ini:');
+            }
+            // NEAR RPC Callbacks
+            else if (data === 'near_rpc_menu') {
+                await this.showNearRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'near_rpc_select') {
+                await this.showNearRpcList(cryptoApp, chatId);
+            }
+            else if (data === 'near_rpc_add') {
+                await this.startAddNearRpcFlow(chatId);
+            }
+            else if (data === 'near_rpc_info') {
+                await this.showNearRpcInfo(cryptoApp, chatId);
+            }
+            else if (data === 'near_rpc_delete_menu') {
+                await this.showNearRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('near_rpc_del_')) {
+                const rpcKey = data.replace('near_rpc_del_', '');
+                cryptoApp.deleteNearRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: '🗑️ RPC NEAR berhasil dihapus.' });
+                await this.showNearRpcDeleteMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('near_rpc_sel_')) {
+                const rpcKey = data.replace('near_rpc_sel_', '');
+                cryptoApp.selectNearRpc(rpcKey);
+                this.bot.answerCallbackQuery(query.id, { text: `🟢 Aktif: ${cryptoApp.currentNearRpcName}` });
+                await this.showNearRpcMenu(cryptoApp, chatId);
+            }
+            else if (data === 'near_rpc_edit_menu') {
+                await this.showNearRpcEditMenu(cryptoApp, chatId);
+            }
+            else if (data.startsWith('near_rpc_edit_')) {
+                const rpcKey = data.replace('near_rpc_edit_', '');
+                await this.showNearRpcEditPropMenu(cryptoApp, chatId, rpcKey);
+            }
+            else if (data.startsWith('near_rpc_editprop_name_')) {
+                const rpcKey = data.replace('near_rpc_editprop_name_', '');
+                this.userStates.set(chatId, { action: 'awaiting_near_rpc_edit', nearEditKey: rpcKey, nearEditProp: 'name' });
+                this.bot.sendMessage(chatId, '🏷️ Masukkan nama baru untuk RPC NEAR ini:');
+            }
+            else if (data.startsWith('near_rpc_editprop_url_')) {
+                const rpcKey = data.replace('near_rpc_editprop_url_', '');
+                this.userStates.set(chatId, { action: 'awaiting_near_rpc_edit', nearEditKey: rpcKey, nearEditProp: 'rpc' });
+                this.bot.sendMessage(chatId, '🌐 Masukkan URL baru untuk RPC NEAR ini:');
             }
             else if (data === 'rpc_select') {
                 await this.showRpcList(cryptoApp, chatId);
@@ -5893,14 +7985,34 @@ class TelegramFullController {
                     show_alert: false
                 });
             }
-            // [v20.1] Auto Approve menu callback
+            // [v20.1] Auto Approve menu callback — tampilkan pilihan chain dulu
             else if (data === 'auto_approve_menu') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
                 } catch (e) {}
-                this.showAutoApproveTxMenu(chatId);
+                this.showAutoApproveChainSelectMenu(chatId);
             }
-            // [v20.1] Toggle Auto Approve per RPC
+            // Pilih chain EVM untuk Auto Approve
+            else if (data === 'auto_approve_chain_evm') {
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'evm');
+            }
+            // Pilih chain Solana untuk Auto Approve
+            else if (data === 'auto_approve_chain_solana') {
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'solana');
+            }
+            else if (data === 'auto_approve_chain_aptos') {
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'aptos');
+            }
+            // [v20.1] Toggle Auto Approve per RPC (EVM)
             else if (data.startsWith('auto_approve_rpc_')) {
                 const rpcKey = data.replace('auto_approve_rpc_', '');
                 const rpc = cryptoApp.savedRpcs[rpcKey];
@@ -5925,7 +8037,163 @@ class TelegramFullController {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
                 } catch (e) {}
-                this.showAutoApproveTxMenu(chatId);
+                await this.showAutoApproveTxMenu(chatId, 'evm');
+            }
+            // Toggle Auto Approve per RPC (Solana)
+            else if (data.startsWith('auto_approve_solrpc_')) {
+                const rpcKey = data.replace('auto_approve_solrpc_', '');
+                const rpc = cryptoApp.savedSolanaRpcs[rpcKey];
+                if (rpc) {
+                    rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
+                    cryptoApp.saveSolanaRpcConfig();
+                    
+                    const newStatus = rpc.autoApprove !== false;
+                    const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
+                    
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: `${rpc.name}: ${statusText}`,
+                        show_alert: false
+                    });
+                } else {
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: '❌ RPC tidak ditemukan.',
+                        show_alert: true
+                    });
+                }
+                
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'solana');
+            }
+            // Toggle Auto Approve per RPC (Aptos)
+            else if (data.startsWith('auto_approve_aptrpc_')) {
+                const rpcKey = data.replace('auto_approve_aptrpc_', '');
+                const rpc = cryptoApp.savedAptosRpcs[rpcKey];
+                if (rpc) {
+                    rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
+                    cryptoApp.saveAptosRpcConfig();
+                    
+                    const newStatus = rpc.autoApprove !== false;
+                    const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
+                    
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: `${rpc.name}: ${statusText}`,
+                        show_alert: false
+                    });
+                } else {
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: '❌ RPC tidak ditemukan.',
+                        show_alert: true
+                    });
+                }
+                
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'aptos');
+            }
+            // Pilih chain Sui untuk Auto Approve
+            else if (data === 'auto_approve_chain_sui') {
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'sui');
+            }
+            // Toggle Auto Approve per RPC (Sui)
+            else if (data.startsWith('auto_approve_suirpc_')) {
+                const rpcKey = data.replace('auto_approve_suirpc_', '');
+                const rpc = cryptoApp.savedSuiRpcs[rpcKey];
+                if (rpc) {
+                    rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
+                    cryptoApp.saveSuiRpcConfig();
+                    
+                    const newStatus = rpc.autoApprove !== false;
+                    const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
+                    
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: `${rpc.name}: ${statusText}`,
+                        show_alert: false
+                    });
+                } else {
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: '❌ RPC tidak ditemukan.',
+                        show_alert: true
+                    });
+                }
+                
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'sui');
+            }
+            // Pilih chain TON untuk Auto Approve
+            else if (data === 'auto_approve_chain_ton') {
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'ton');
+            }
+            // Toggle Auto Approve per RPC (TON)
+            else if (data.startsWith('auto_approve_tonrpc_')) {
+                const rpcKey = data.replace('auto_approve_tonrpc_', '');
+                const rpc = cryptoApp.savedTonRpcs[rpcKey];
+                if (rpc) {
+                    rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
+                    cryptoApp.saveTonRpcConfig();
+                    
+                    const newStatus = rpc.autoApprove !== false;
+                    const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
+                    
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: `${rpc.name}: ${statusText}`,
+                        show_alert: false
+                    });
+                } else {
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: '❌ RPC tidak ditemukan.',
+                        show_alert: true
+                    });
+                }
+                
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'ton');
+            }
+            // Pilih chain NEAR untuk Auto Approve
+            else if (data === 'auto_approve_chain_near') {
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'near');
+            }
+            // Toggle Auto Approve per RPC (NEAR)
+            else if (data.startsWith('auto_approve_nearrpc_')) {
+                const rpcKey = data.replace('auto_approve_nearrpc_', '');
+                const rpc = cryptoApp.savedNearRpcs[rpcKey];
+                if (rpc) {
+                    rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
+                    cryptoApp.saveNearRpcConfig();
+                    
+                    const newStatus = rpc.autoApprove !== false;
+                    const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
+                    
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: `${rpc.name}: ${statusText}`,
+                        show_alert: false
+                    });
+                } else {
+                    await this.bot.answerCallbackQuery(query.id, {
+                        text: '❌ RPC tidak ditemukan.',
+                        show_alert: true
+                    });
+                }
+                
+                try {
+                    await this.bot.deleteMessage(chatId, query.message.message_id);
+                } catch (e) {}
+                await this.showAutoApproveTxMenu(chatId, 'near');
             }
             // [v20.1] Transaction/Sign Approve/Reject callbacks
             else if (data.startsWith('tx_approve_') || data.startsWith('tx_reject_')) {

@@ -9,6 +9,12 @@ const TelegramBot = require('node-telegram-bot-api');
 const MetaMaskRpcServer = require('../rpc/MetaMaskRpcServer');
 const { globalTxQueue } = require('../core/TransactionQueue');
 const TwoFactorAuth = require('../auth/TwoFactorAuth');
+const { Keypair, VersionedTransaction, Transaction, nacl } = require('@solana/web3.js');
+const { derivePath } = require('ed25519-hd-key');
+const { Account: AptosAccount } = require('@aptos-labs/ts-sdk');
+const { Ed25519Keypair } = require('@mysten/sui/keypairs/ed25519');
+const { TonClient, WalletContractV4 } = require('@ton/ton');
+const { mnemonicToWalletKey } = require('@ton/crypto');
 
 class CryptoAutoTx {
     constructor(rl, secureConfig, sessionId) {
@@ -51,6 +57,30 @@ class CryptoAutoTx {
 
         this.walletFile = path.join(this.dataDir, `${this.sessionId}_wallets.enc`);
         this.rpcFile = path.join(this.dataDir, `${this.sessionId}_rpc-config.json`);
+        this.solanaRpcFile = path.join(this.dataDir, `${this.sessionId}_solana-rpc-config.json`);
+        this.currentSolanaRpc = null;
+        this.currentSolanaRpcName = null;
+        this.savedSolanaRpcs = {};
+
+        this.aptosRpcFile = path.join(this.dataDir, `${this.sessionId}_aptos-rpc-config.json`);
+        this.currentAptosRpc = null;
+        this.currentAptosRpcName = null;
+        this.savedAptosRpcs = {};
+
+        this.suiRpcFile = path.join(this.dataDir, `${this.sessionId}_sui-rpc-config.json`);
+        this.currentSuiRpc = null;
+        this.currentSuiRpcName = null;
+        this.savedSuiRpcs = {};
+
+        this.tonRpcFile = path.join(this.dataDir, `${this.sessionId}_ton-rpc-config.json`);
+        this.currentTonRpc = null;
+        this.currentTonRpcName = null;
+        this.savedTonRpcs = {};
+
+        this.nearRpcFile = path.join(this.dataDir, `${this.sessionId}_near-rpc-config.json`);
+        this.currentNearRpc = null;
+        this.currentNearRpcName = null;
+        this.savedNearRpcs = {};
 
         this.masterKey = null;
         this.transactionCounts = new Map();
@@ -89,6 +119,11 @@ class CryptoAutoTx {
         }
 
         this.loadRpcConfig();
+        this.loadSolanaRpcConfig();
+        this.loadAptosRpcConfig();
+        this.loadSuiRpcConfig();
+        this.loadTonRpcConfig();
+        this.loadNearRpcConfig();
     }
 
     ensureDataDirectory() {
@@ -226,6 +261,538 @@ class CryptoAutoTx {
             console.log(`[Session ${this.sessionId}] Error saving RPC config:`, error.message);
             return false;
         }
+    }
+
+    // 🟣 SOLANA RPC CONFIGURATION SYSTEM
+    loadSolanaRpcConfig() {
+        try {
+            if (fs.existsSync(this.solanaRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.solanaRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentSolanaRpc = rpcConfig.currentRpc || null;
+                    this.currentSolanaRpcName = rpcConfig.currentRpcName || null;
+                    this.savedSolanaRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC Solana tidak ditemukan, membuat default...`);
+                this.savedSolanaRpcs = {};
+                this.currentSolanaRpc = null;
+                this.currentSolanaRpcName = null;
+                this.saveSolanaRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading Solana RPC config:`, error.message);
+        }
+    }
+
+    saveSolanaRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentSolanaRpc,
+                currentRpcName: this.currentSolanaRpcName,
+                savedRpcs: this.savedSolanaRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.solanaRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] Solana RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving Solana RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addSolanaRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `solana_${Date.now()}`;
+        this.savedSolanaRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            priorityFee: 'Medium', // Default: Medium (Low, Medium, High, Very High)
+            commitment: 'confirmed', // Default: confirmed (processed, confirmed, finalized)
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentSolanaRpc) {
+            this.currentSolanaRpc = rpcUrl;
+            this.currentSolanaRpcName = name;
+        }
+        this.saveSolanaRpcConfig();
+        return key;
+    }
+
+    deleteSolanaRpc(key) {
+        if (!this.savedSolanaRpcs[key]) return false;
+        const targetRpc = this.savedSolanaRpcs[key].rpc;
+        delete this.savedSolanaRpcs[key];
+        
+        if (this.currentSolanaRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedSolanaRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentSolanaRpc = this.savedSolanaRpcs[nextKey].rpc;
+                this.currentSolanaRpcName = this.savedSolanaRpcs[nextKey].name;
+            } else {
+                this.currentSolanaRpc = null;
+                this.currentSolanaRpcName = null;
+            }
+        }
+        this.saveSolanaRpcConfig();
+        return true;
+    }
+
+    selectSolanaRpc(key) {
+        if (!this.savedSolanaRpcs[key]) return false;
+        const selected = this.savedSolanaRpcs[key];
+        this.currentSolanaRpc = selected.rpc;
+        this.currentSolanaRpcName = selected.name;
+        this.saveSolanaRpcConfig();
+        return true;
+    }
+
+    updateSolanaRpcProperty(key, property, value) {
+        if (!this.savedSolanaRpcs[key]) return false;
+        this.savedSolanaRpcs[key][property] = value;
+        this.saveSolanaRpcConfig();
+        return true;
+    }
+
+    // 🔵 APTOS RPC CONFIGURATION SYSTEM
+    loadAptosRpcConfig() {
+        try {
+            if (fs.existsSync(this.aptosRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.aptosRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentAptosRpc = rpcConfig.currentRpc || null;
+                    this.currentAptosRpcName = rpcConfig.currentRpcName || null;
+                    this.savedAptosRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC Aptos tidak ditemukan, membuat default...`);
+                this.savedAptosRpcs = {};
+                this.currentAptosRpc = null;
+                this.currentAptosRpcName = null;
+                this.saveAptosRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading Aptos RPC config:`, error.message);
+        }
+    }
+
+    saveAptosRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentAptosRpc,
+                currentRpcName: this.currentAptosRpcName,
+                savedRpcs: this.savedAptosRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.aptosRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] Aptos RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving Aptos RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addAptosRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `aptos_${Date.now()}`;
+        this.savedAptosRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentAptosRpc) {
+            this.currentAptosRpc = rpcUrl;
+            this.currentAptosRpcName = name;
+        }
+        this.saveAptosRpcConfig();
+        return key;
+    }
+
+    deleteAptosRpc(key) {
+        if (!this.savedAptosRpcs[key]) return false;
+        const targetRpc = this.savedAptosRpcs[key].rpc;
+        delete this.savedAptosRpcs[key];
+
+        if (this.currentAptosRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedAptosRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentAptosRpc = this.savedAptosRpcs[nextKey].rpc;
+                this.currentAptosRpcName = this.savedAptosRpcs[nextKey].name;
+            } else {
+                this.currentAptosRpc = null;
+                this.currentAptosRpcName = null;
+            }
+        }
+        this.saveAptosRpcConfig();
+        return true;
+    }
+
+    selectAptosRpc(key) {
+        if (!this.savedAptosRpcs[key]) return false;
+        const selected = this.savedAptosRpcs[key];
+        this.currentAptosRpc = selected.rpc;
+        this.currentAptosRpcName = selected.name;
+        this.saveAptosRpcConfig();
+        return true;
+    }
+
+    updateAptosRpcProperty(key, property, value) {
+        if (!this.savedAptosRpcs[key]) return false;
+        this.savedAptosRpcs[key][property] = value;
+        this.saveAptosRpcConfig();
+        return true;
+    }
+
+    // 🟡 SUI RPC CONFIGURATION SYSTEM
+    loadSuiRpcConfig() {
+        try {
+            if (fs.existsSync(this.suiRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.suiRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentSuiRpc = rpcConfig.currentRpc || null;
+                    this.currentSuiRpcName = rpcConfig.currentRpcName || null;
+                    this.savedSuiRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC Sui tidak ditemukan, membuat default...`);
+                this.savedSuiRpcs = {};
+                this.currentSuiRpc = null;
+                this.currentSuiRpcName = null;
+                this.saveSuiRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading Sui RPC config:`, error.message);
+        }
+    }
+
+    saveSuiRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentSuiRpc,
+                currentRpcName: this.currentSuiRpcName,
+                savedRpcs: this.savedSuiRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.suiRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] Sui RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving Sui RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addSuiRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `sui_${Date.now()}`;
+        this.savedSuiRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentSuiRpc) {
+            this.currentSuiRpc = rpcUrl;
+            this.currentSuiRpcName = name;
+        }
+        this.saveSuiRpcConfig();
+        return key;
+    }
+
+    deleteSuiRpc(key) {
+        if (!this.savedSuiRpcs[key]) return false;
+        const targetRpc = this.savedSuiRpcs[key].rpc;
+        delete this.savedSuiRpcs[key];
+
+        if (this.currentSuiRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedSuiRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentSuiRpc = this.savedSuiRpcs[nextKey].rpc;
+                this.currentSuiRpcName = this.savedSuiRpcs[nextKey].name;
+            } else {
+                this.currentSuiRpc = null;
+                this.currentSuiRpcName = null;
+            }
+        }
+        this.saveSuiRpcConfig();
+        return true;
+    }
+
+    selectSuiRpc(key) {
+        if (!this.savedSuiRpcs[key]) return false;
+        const selected = this.savedSuiRpcs[key];
+        this.currentSuiRpc = selected.rpc;
+        this.currentSuiRpcName = selected.name;
+        this.saveSuiRpcConfig();
+        return true;
+    }
+
+    updateSuiRpcProperty(key, property, value) {
+        if (!this.savedSuiRpcs[key]) return false;
+        this.savedSuiRpcs[key][property] = value;
+        this.saveSuiRpcConfig();
+        return true;
+    }
+
+    // 💎 TON RPC CONFIGURATION SYSTEM
+    loadTonRpcConfig() {
+        try {
+            if (fs.existsSync(this.tonRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.tonRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentTonRpc = rpcConfig.currentRpc || null;
+                    this.currentTonRpcName = rpcConfig.currentRpcName || null;
+                    this.savedTonRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC TON tidak ditemukan, membuat default...`);
+                this.savedTonRpcs = {};
+                this.currentTonRpc = null;
+                this.currentTonRpcName = null;
+                this.saveTonRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading TON RPC config:`, error.message);
+        }
+    }
+
+    saveTonRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentTonRpc,
+                currentRpcName: this.currentTonRpcName,
+                savedRpcs: this.savedTonRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.tonRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] TON RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving TON RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addTonRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `ton_${Date.now()}`;
+        this.savedTonRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentTonRpc) {
+            this.currentTonRpc = rpcUrl;
+            this.currentTonRpcName = name;
+        }
+        this.saveTonRpcConfig();
+        return key;
+    }
+
+    deleteTonRpc(key) {
+        if (!this.savedTonRpcs[key]) return false;
+        const targetRpc = this.savedTonRpcs[key].rpc;
+        delete this.savedTonRpcs[key];
+
+        if (this.currentTonRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedTonRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentTonRpc = this.savedTonRpcs[nextKey].rpc;
+                this.currentTonRpcName = this.savedTonRpcs[nextKey].name;
+            } else {
+                this.currentTonRpc = null;
+                this.currentTonRpcName = null;
+            }
+        }
+        this.saveTonRpcConfig();
+        return true;
+    }
+
+    selectTonRpc(key) {
+        if (!this.savedTonRpcs[key]) return false;
+        const selected = this.savedTonRpcs[key];
+        this.currentTonRpc = selected.rpc;
+        this.currentTonRpcName = selected.name;
+        this.saveTonRpcConfig();
+        return true;
+    }
+
+    updateTonRpcProperty(key, property, value) {
+        if (!this.savedTonRpcs[key]) return false;
+        this.savedTonRpcs[key][property] = value;
+        this.saveTonRpcConfig();
+        return true;
+    }
+
+    // 🌿 NEAR RPC CONFIGURATION SYSTEM
+    loadNearRpcConfig() {
+        try {
+            if (fs.existsSync(this.nearRpcFile)) {
+                this.ensureMasterKey();
+                const raw = fs.readFileSync(this.nearRpcFile, 'utf8');
+                let rpcConfig;
+                try {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && parsed.iv && parsed.data && parsed.authTag) {
+                        rpcConfig = this.decrypt(parsed);
+                    } else {
+                        rpcConfig = parsed;
+                    }
+                } catch (e) {
+                    rpcConfig = JSON.parse(raw);
+                }
+
+                if (rpcConfig) {
+                    this.currentNearRpc = rpcConfig.currentRpc || null;
+                    this.currentNearRpcName = rpcConfig.currentRpcName || null;
+                    this.savedNearRpcs = rpcConfig.savedRpcs || {};
+                }
+            } else {
+                console.log(`[Session ${this.sessionId}] File RPC NEAR tidak ditemukan, membuat default...`);
+                this.savedNearRpcs = {};
+                this.currentNearRpc = null;
+                this.currentNearRpcName = null;
+                this.saveNearRpcConfig();
+            }
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error loading NEAR RPC config:`, error.message);
+        }
+    }
+
+    saveNearRpcConfig() {
+        try {
+            this.ensureMasterKey();
+            const rpcConfig = {
+                currentRpc: this.currentNearRpc,
+                currentRpcName: this.currentNearRpcName,
+                savedRpcs: this.savedNearRpcs,
+                updatedAt: new Date().toISOString()
+            };
+            const encryptedData = this.encrypt(rpcConfig);
+            fs.writeFileSync(this.nearRpcFile, JSON.stringify(encryptedData, null, 2));
+            console.log(`[Session ${this.sessionId}] NEAR RPC configuration saved`);
+            return true;
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error saving NEAR RPC config:`, error.message);
+            return false;
+        }
+    }
+
+    addNearRpc(rpcUrl, name) {
+        if (!rpcUrl || !name) return null;
+        const key = `near_${Date.now()}`;
+        this.savedNearRpcs[key] = {
+            rpc: rpcUrl,
+            name: name,
+            createdAt: new Date().toISOString()
+        };
+        if (!this.currentNearRpc) {
+            this.currentNearRpc = rpcUrl;
+            this.currentNearRpcName = name;
+        }
+        this.saveNearRpcConfig();
+        return key;
+    }
+
+    deleteNearRpc(key) {
+        if (!this.savedNearRpcs[key]) return false;
+        const targetRpc = this.savedNearRpcs[key].rpc;
+        delete this.savedNearRpcs[key];
+
+        if (this.currentNearRpc === targetRpc) {
+            const remainingKeys = Object.keys(this.savedNearRpcs);
+            if (remainingKeys.length > 0) {
+                const nextKey = remainingKeys[0];
+                this.currentNearRpc = this.savedNearRpcs[nextKey].rpc;
+                this.currentNearRpcName = this.savedNearRpcs[nextKey].name;
+            } else {
+                this.currentNearRpc = null;
+                this.currentNearRpcName = null;
+            }
+        }
+        this.saveNearRpcConfig();
+        return true;
+    }
+
+    selectNearRpc(key) {
+        if (!this.savedNearRpcs[key]) return false;
+        const selected = this.savedNearRpcs[key];
+        this.currentNearRpc = selected.rpc;
+        this.currentNearRpcName = selected.name;
+        this.saveNearRpcConfig();
+        return true;
+    }
+
+    updateNearRpcProperty(key, property, value) {
+        if (!this.savedNearRpcs[key]) return false;
+        this.savedNearRpcs[key][property] = value;
+        this.saveNearRpcConfig();
+        return true;
     }
 
     setupProvider() {
@@ -738,6 +1305,75 @@ class CryptoAutoTx {
         } catch (error) {
             console.log(`[Session ${this.sessionId}] ❌ Error saving wallet:`, error.message);
             return false;
+        }
+    }
+
+    deriveSolanaAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const m = ethers.Mnemonic.fromPhrase(mnemonic);
+            const seedHex = m.computeSeed().slice(2);
+            const derived = derivePath("m/44'/501'/0'/0'", seedHex);
+            const keypair = Keypair.fromSeed(derived.key);
+            return keypair.publicKey.toBase58();
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving Solana address:`, error.message);
+            return null;
+        }
+    }
+
+    deriveAptosAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const account = AptosAccount.fromDerivationPath({
+                path: "m/44'/637'/0'/0'/0'",
+                mnemonic: mnemonic,
+            });
+            return account.accountAddress.toString();
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving Aptos address:`, error.message);
+            return null;
+        }
+    }
+
+    deriveSuiAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const keypair = Ed25519Keypair.deriveKeypair(mnemonic, "m/44'/784'/0'/0'/0'");
+            return keypair.toSuiAddress();
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving Sui address:`, error.message);
+            return null;
+        }
+    }
+
+    async deriveTonAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const key = await mnemonicToWalletKey(mnemonic.split(' '));
+            const wallet = WalletContractV4.create({
+                workchain: 0,
+                publicKey: key.publicKey
+            });
+            return wallet.address.toString({ bounceable: false, testOnly: false });
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving TON address:`, error.message);
+            return null;
+        }
+    }
+
+    deriveNearAddress(mnemonic) {
+        try {
+            if (!mnemonic) return null;
+            const bip39 = require('bip39');
+            const nacl = require('tweetnacl');
+            const seed = bip39.mnemonicToSeedSync(mnemonic);
+            const { key } = derivePath("m/44'/397'/0'", seed.toString('hex'));
+            const keyPair = nacl.sign.keyPair.fromSeed(key);
+            return Buffer.from(keyPair.publicKey).toString('hex');
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error deriving NEAR address:`, error.message);
+            return null;
         }
     }
 
@@ -1825,7 +2461,7 @@ class CryptoAutoTx {
      * Request manual transaction/signing approval from user via Telegram.
      */
     requestTxApproval(method, params, requestOrigin = null) {
-        return new Promise((resolve, reject) => {
+        return new Promise(async (resolve, reject) => {
             // Safety fallback: if bot or chatId is not available, auto-approve
             if (!this.bot || !this.sessionNotificationChatId) {
                 console.log(`[Session ${this.sessionId}] ⚠️ Tx Approval: No Telegram session, auto-approving...`);
@@ -1978,6 +2614,33 @@ class CryptoAutoTx {
                     `⛓️ *Chain ID:* \`${this.currentChainId}\`\n` +
                     `💳 *Wallet:* \`${this.wallet?.address || 'N/A'}\`\n` +
                     `📊 *Data:* \n\`\`\`json\n${typedDataStr.length > 500 ? typedDataStr.substring(0, 500) + '\n... (data terlalu panjang)' : typedDataStr}\n\`\`\``;
+
+            } else if (method === 'solana_signTransaction') {
+                const txHex = params[0] || '';
+                const solAddress = (await this.getActiveSolanaAddress()) || 'N/A';
+                detailText = `🟣 *Tipe:* Solana Sign Transaction\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain:* Solana\n` +
+                    `🌐 *RPC:* \`${this._escapeMarkdown(this.currentSolanaRpcName || 'Default')}\`\n` +
+                    `💳 *Wallet:* \`${solAddress}\`\n` +
+                    `💾 *Data Hex:* \`${txHex.length > 100 ? txHex.substring(0, 100) + '...' : txHex}\` (${Math.floor(txHex.length / 2)} bytes)`;
+
+            } else if (method === 'solana_signMessage') {
+                const messageHex = params[0] || '';
+                const solAddress = (await this.getActiveSolanaAddress()) || 'N/A';
+                let decodedMessage = '';
+                try {
+                    decodedMessage = Buffer.from(messageHex, 'hex').toString('utf8');
+                } catch (e) {
+                    decodedMessage = messageHex;
+                }
+                const safeMessage = decodedMessage.replace(/```/g, "'''");
+                detailText = `🟣 *Tipe:* Solana Sign Message\n` +
+                    `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
+                    `⛓️ *Chain:* Solana\n` +
+                    `💳 *Wallet:* \`${solAddress}\`\n` +
+                    `💬 *Pesan:* \n\`\`\`\n${safeMessage}\n\`\`\``;
+
             } else {
                 detailText = `📝 *Tipe:* \`${method}\`\n` +
                     `👤 *DApp:* \`${this._escapeMarkdown(requestOrigin || 'Unknown DApp')}\`\n` +
@@ -3338,6 +4001,205 @@ class CryptoAutoTx {
         const signedData = await this.wallet.signTypedData(domain, filteredTypes, message);
         console.log(`[Session ${this.sessionId}] eth_signTypedData completed`);
         return signedData;
+    }
+
+    async getActiveSolanaAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveSolanaAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSolanaAddress:`, error.message);
+            return null;
+        }
+    }
+
+    async getActiveSolanaKeypair() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+
+            const m = ethers.Mnemonic.fromPhrase(walletData.mnemonic);
+            const seedHex = m.computeSeed().slice(2);
+            const derived = derivePath("m/44'/501'/0'/0'", seedHex);
+            return Keypair.fromSeed(derived.key);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSolanaKeypair:`, error.message);
+            return null;
+        }
+    }
+
+    isSolanaAutoApproveActive() {
+        if (!this.savedSolanaRpcs || !this.currentSolanaRpc) return true;
+        for (const key in this.savedSolanaRpcs) {
+            if (this.savedSolanaRpcs[key].rpc === this.currentSolanaRpc) {
+                return this.savedSolanaRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveAptosAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveAptosAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveAptosAddress:`, error.message);
+            return null;
+        }
+    }
+
+    isAptosAutoApproveActive() {
+        if (!this.savedAptosRpcs || !this.currentAptosRpc) return true;
+        for (const key in this.savedAptosRpcs) {
+            if (this.savedAptosRpcs[key].rpc === this.currentAptosRpc) {
+                return this.savedAptosRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveSuiAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveSuiAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSuiAddress:`, error.message);
+            return null;
+        }
+    }
+
+    async getActiveSuiKeypair() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return Ed25519Keypair.deriveKeypair(walletData.mnemonic, "m/44'/784'/0'/0'/0'");
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveSuiKeypair:`, error.message);
+            return null;
+        }
+    }
+
+    isSuiAutoApproveActive() {
+        if (!this.savedSuiRpcs || !this.currentSuiRpc) return true;
+        for (const key in this.savedSuiRpcs) {
+            if (this.savedSuiRpcs[key].rpc === this.currentSuiRpc) {
+                return this.savedSuiRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveTonAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return await this.deriveTonAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveTonAddress:`, error.message);
+            return null;
+        }
+    }
+
+    isTonAutoApproveActive() {
+        if (!this.savedTonRpcs || !this.currentTonRpc) return true;
+        for (const key in this.savedTonRpcs) {
+            if (this.savedTonRpcs[key].rpc === this.currentTonRpc) {
+                return this.savedTonRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async getActiveNearAddress() {
+        try {
+            if (!this.wallet) return null;
+            const wallets = await this.loadWallets();
+            const walletData = wallets[this.wallet.address];
+            if (!walletData || !walletData.mnemonic) return null;
+            return this.deriveNearAddress(walletData.mnemonic);
+        } catch (error) {
+            console.log(`[Session ${this.sessionId}] Error getActiveNearAddress:`, error.message);
+            return null;
+        }
+    }
+
+    isNearAutoApproveActive() {
+        if (!this.savedNearRpcs || !this.currentNearRpc) return true;
+        for (const key in this.savedNearRpcs) {
+            if (this.savedNearRpcs[key].rpc === this.currentNearRpc) {
+                return this.savedNearRpcs[key].autoApprove !== false;
+            }
+        }
+        return true;
+    }
+
+    async handleSolanaSignTransaction(txHex, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        const keypair = await this.getActiveSolanaKeypair();
+        if (!keypair) throw new Error('Solana wallet tidak tersedia (diimpor via Private Key)');
+
+        if (!this.isSolanaAutoApproveActive()) {
+            const approved = await this.requestTxApproval('solana_signTransaction', [txHex], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling solana_signTransaction...`);
+        const txBuf = Buffer.from(txHex, 'hex');
+        let tx;
+        let isVersioned = false;
+        try {
+            tx = VersionedTransaction.deserialize(txBuf);
+            isVersioned = true;
+        } catch (e) {
+            tx = Transaction.from(txBuf);
+        }
+
+        if (isVersioned) {
+            tx.sign([keypair]);
+        } else {
+            tx.sign(keypair);
+        }
+
+        const signedTxHex = Buffer.from(tx.serialize()).toString('hex');
+        console.log(`[Session ${this.sessionId}] solana_signTransaction completed`);
+        return { signedTxHex };
+    }
+
+    async handleSolanaSignMessage(messageHex, requestOrigin = null) {
+        if (!this.wallet) throw new Error('Wallet belum aktif');
+        const keypair = await this.getActiveSolanaKeypair();
+        if (!keypair) throw new Error('Solana wallet tidak tersedia (diimpor via Private Key)');
+
+        if (!this.isSolanaAutoApproveActive()) {
+            const approved = await this.requestTxApproval('solana_signMessage', [messageHex], requestOrigin);
+            if (!approved) {
+                throw new Error('User rejected the transaction');
+            }
+        }
+
+        console.log(`[Session ${this.sessionId}] Handling solana_signMessage...`);
+        const msgBuf = Buffer.from(messageHex, 'hex');
+        const signature = nacl.sign.detached(msgBuf, keypair.secretKey);
+        const signatureHex = Buffer.from(signature).toString('hex');
+        console.log(`[Session ${this.sessionId}] solana_signMessage completed`);
+        return { signatureHex };
     }
 }
 

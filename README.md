@@ -359,7 +359,7 @@ Ketika Bot Utama dijalankan setelah ada perubahan file/konfigurasi:
 Bot ini dilengkapi **tiga versi browser extension** untuk kemudahan integrasi dengan DApp:
 
 ### Chrome Extension (Manifest V3)
-> Lokasi: `fa-starx-extension-v4/`
+> Lokasi: `extension bot metamaks/`
 ```
 Versi    : 4.0.0
 Support  : Chrome, Brave, Edge (Chromium)
@@ -384,7 +384,7 @@ Support  : Firefox, Firefox ESR
 **Chrome / Bitget Extension:**
 1. Buka `chrome://extensions/`
 2. Aktifkan **Developer Mode**
-3. Klik **Load unpacked** → pilih folder extension yang diinginkan (`fa-starx-extension-v4/` atau `extension bot bitget/`)
+3. Klik **Load unpacked** → pilih folder extension yang diinginkan (`extension bot metamaks/` atau `extension bot bitget/`)
 
 **Firefox:**
 1. Buka `about:debugging`

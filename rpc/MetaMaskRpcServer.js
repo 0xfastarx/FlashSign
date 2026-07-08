@@ -203,8 +203,7 @@ class MetaMaskRpcServer {
 
             // Jika eth_accounts, kembalikan address hanya jika DApp sudah terkoneksi
             if (method === 'eth_accounts') {
-                const isExtension = !requestOrigin || requestOrigin.startsWith('chrome-extension://');
-                if (!isExtension && !isConnected) {
+                if (!isConnected) {
                     return { jsonrpc: '2.0', id, result: [] };
                 }
                 console.log(`[RPC Inject] 👛 ${method} → ${address}`);
@@ -221,10 +220,8 @@ class MetaMaskRpcServer {
                     via: `RPC Inject (Port ${this.port})`
                 };
 
-                const dappApprovalRequired = this.cryptoApp.isDappConnectionApprovalRequired();
-                if (dappApprovalRequired && !isConnected) {
-                    const approvalSource = this.cryptoApp.globalDappApproval ? 'Global ON' : 'Manual RPC';
-                    console.log(`[RPC Inject] 🔐 DApp Approval ON (${approvalSource}) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                if (this.cryptoApp.dappApprovalRequired && !isConnected) {
+                    console.log(`[RPC Inject] 🔐 DApp Approval ON — menunggu persetujuan user untuk: ${dappOrigin}`);
                     try {
                         await this.cryptoApp.requestDappApproval(dappDetails);
                         console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
@@ -366,16 +363,164 @@ class MetaMaskRpcServer {
             return { jsonrpc: '2.0', id, result: { ok: false, reason: 'No connected dapps' } };
         }
 
+        // ══════════════════════════════════════════════════════════════════════
+        // ── SOLANA RPC HANDLERS ─────────────────────────────────────────────
+        // Extension Bitget mengirim Solana request ke port yang sama.
+        // Bot mendeteksi method berawalan solana_ dan memprosesnya di sini.
+        // ══════════════════════════════════════════════════════════════════════
+
+        if (method === 'solana_accounts' || method === 'solana_requestAccounts') {
+            const solAddress = await this.cryptoApp.getActiveSolanaAddress();
+            if (!solAddress) {
+                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi Solana wallet tidak tersedia`);
+                return { jsonrpc: '2.0', id, result: [] };
+            }
+
+            const dappOrigin = requestOrigin || 'Unknown Origin';
+            const isConnected = this.cryptoApp.isDappConnected(dappOrigin);
+
+            if (method === 'solana_requestAccounts') {
+                const dappDetails = {
+                    dappName: this._extractDappName(dappOrigin),
+                    dappUrl: dappOrigin,
+                    chainId: 'solana',
+                    walletAddress: solAddress,
+                    via: `RPC Inject Solana (Port ${this.port})`
+                };
+
+                if (this.cryptoApp.dappApprovalRequired && !isConnected) {
+                    console.log(`[RPC Inject] 🔐 DApp Approval ON (Solana) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    try {
+                        await this.cryptoApp.requestDappApproval(dappDetails);
+                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        this.cryptoApp.addConnectedDapp(dappDetails);
+                    } catch (approvalError) {
+                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        return {
+                            jsonrpc: '2.0', id,
+                            error: { code: 4001, message: 'User rejected the connection request' }
+                        };
+                    }
+                } else if (!isConnected) {
+                    // Mode OFF dan belum terhubung: simpan dan kirim notifikasi info-only
+                    this.cryptoApp.addConnectedDapp(dappDetails);
+                    this.cryptoApp.sendDappConnectNotification(dappDetails);
+                }
+            } else {
+                // Untuk solana_accounts, kembalikan address hanya jika DApp sudah terkoneksi
+                if (!isConnected) {
+                    return { jsonrpc: '2.0', id, result: [] };
+                }
+            }
+
+            console.log(`[RPC Inject] 🟣 ${method} → ${solAddress}`);
+            return { jsonrpc: '2.0', id, result: [solAddress] };
+        }
+
+        if (method === 'solana_signTransaction') {
+            try {
+                const txHex = params[0] || '';
+                const result = await this.cryptoApp.handleSolanaSignTransaction(txHex, requestOrigin);
+
+                // Kirim notifikasi Telegram
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const solAddress = (await this.cryptoApp.getActiveSolanaAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] SOLANA TX SIGNED!*\n\n` +
+                        `💳 \`${solAddress}\`\n` +
+                        `Method: \`solana_signTransaction\`\n` +
+                        `⛓️ Chain: *Solana*\n` +
+                        `🌐 RPC: *${this.cryptoApp.currentSolanaRpcName || 'Default'}*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ solana_signTransaction error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'solana_signMessage') {
+            try {
+                const messageHex = params[0] || '';
+                const result = await this.cryptoApp.handleSolanaSignMessage(messageHex, requestOrigin);
+
+                if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                    const solAddress = (await this.cryptoApp.getActiveSolanaAddress()) || 'N/A';
+                    this.cryptoApp.bot.sendMessage(
+                        this.cryptoApp.sessionNotificationChatId,
+                        `✅ *[RPC Inject] SOLANA MESSAGE SIGNED!*\n\n` +
+                        `💳 \`${solAddress}\`\n` +
+                        `Method: \`solana_signMessage\`\n` +
+                        `⛓️ Chain: *Solana*\n` +
+                        `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
+                        `🕒 ${new Date().toLocaleString('id-ID')}`,
+                        { parse_mode: 'Markdown' }
+                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                }
+
+                return { jsonrpc: '2.0', id, result };
+            } catch (error) {
+                console.log(`[RPC Inject] ❌ solana_signMessage error:`, error.message);
+                return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
+            }
+        }
+
+        if (method === 'solana_dapp_forceDisconnect') {
+            const disconnectInfo = params?.[0] || {};
+            const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
+            const reason = disconnectInfo.reason || 'unknown';
+
+            console.log(`[RPC Inject] 🔌 Solana DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+
+            if (this.cryptoApp.connectedDapps) {
+                const dapp = this.cryptoApp.connectedDapps.find(
+                    d => d.url === dappOrigin || dappOrigin.includes(d.url) || d.url.includes(dappOrigin)
+                );
+
+                if (dapp) {
+                    this.cryptoApp.removeConnectedDapp(dapp.id);
+                    this.cryptoApp.saveRpcConfig();
+                    console.log(`[RPC Inject] ✅ Solana DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                }
+            }
+
+            if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
+                const reasonLabel = {
+                    'wallet_disconnect': 'Wallet Disconnect',
+                    'manual_from_popup': 'Disconnect manual dari popup extension',
+                    'unknown': 'Tidak diketahui'
+                }[reason] || reason;
+
+                this.cryptoApp.bot.sendMessage(
+                    this.cryptoApp.sessionNotificationChatId,
+                    `🔌 *SOLANA DAPP DISCONNECT*\n\n` +
+                    `🌐 DApp: \`${dappOrigin}\`\n` +
+                    `📋 Alasan: ${reasonLabel}\n` +
+                    `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
+                    `✅ DApp telah diputus dari bot secara otomatis.`,
+                    { parse_mode: 'Markdown' }
+                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+            }
+
+            return { jsonrpc: '2.0', id, result: { ok: true } };
+        }
+
         // Jika method perlu intercept (transaksi/signing)
         if (this.interceptedMethods.includes(method)) {
-            return await this.interceptRequest(id, method, params, requestOrigin);
+            return await this.interceptRequest(id, method, params);
         }
 
         // Method lain langsung diteruskan ke RPC provider asli
         return await this.forwardToProvider(id, method, params);
     }
 
-    async interceptRequest(id, method, params, requestOrigin = null) {
+    async interceptRequest(id, method, params) {
         if (!this.cryptoApp.wallet) {
             return {
                 jsonrpc: '2.0', id,
@@ -402,20 +547,20 @@ class MetaMaskRpcServer {
 
             switch (method) {
                 case 'eth_sendTransaction':
-                    result = await this.cryptoApp.handleSendTransaction(params[0], requestOrigin);
+                    result = await this.cryptoApp.handleSendTransaction(params[0]);
                     break;
                 case 'eth_signTransaction':
-                    result = await this.cryptoApp.handleSignTransaction(params[0], requestOrigin);
+                    result = await this.cryptoApp.handleSignTransaction(params[0]);
                     break;
                 case 'personal_sign':
-                    result = await this.cryptoApp.handlePersonalSign(params, requestOrigin);
+                    result = await this.cryptoApp.handlePersonalSign(params);
                     break;
                 case 'eth_sign':
-                    result = await this.cryptoApp.handleEthSign(params, requestOrigin);
+                    result = await this.cryptoApp.handleEthSign(params);
                     break;
                 case 'eth_signTypedData':
                 case 'eth_signTypedData_v4':
-                    result = await this.cryptoApp.handleSignTypedData(params, requestOrigin);
+                    result = await this.cryptoApp.handleSignTypedData(params);
                     break;
                 case 'wallet_addEthereumChain':
                     result = await this.cryptoApp.handleAddEthereumChain(params);

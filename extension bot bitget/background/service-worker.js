@@ -8,7 +8,7 @@
  * - Mode Localhost (127.0.0.1) atau VPS (custom IP)
  * - Config tersimpan di chrome.storage.local (tidak hilang saat browser restart)
  * - Aktif port: user pilih sendiri dari popup
- * - FIX: Session persistence — eth_accounts tidak perlu approval ulang setelah reload
+ * - FIX: Session persistence — eth_accounts & solana_accounts tidak perlu approval ulang setelah reload
  * - FIX: Auto-disconnect — kirim notif ke bot saat DApp disconnect
  */
 
@@ -141,8 +141,6 @@ async function checkBotStatus(config) {
 }
 
 // ─── NOTIFY BOT: DApp Disconnect ──────────────────────────────────────────────
-// Kirim HTTP request ke bot RPC dengan method khusus `dapp_forceDisconnect`
-// Bot akan hapus DApp dari connectedDapps[] dan kirim notif Telegram
 async function notifyBotDisconnect(config, origin, reason) {
   const rpcUrl = buildRpcUrl(config);
   try {
@@ -151,11 +149,10 @@ async function notifyBotDisconnect(config, origin, reason) {
       [{ origin, reason }],
       rpcUrl,
       origin,
-      5000  // timeout 5 detik saja untuk disconnect
+      5000
     );
     console.log('[0xfastarx] ✅ Bot notified: DApp disconnect:', origin);
   } catch (err) {
-    // Bot mungkin offline — tidak masalah, storage lokal sudah dibersihkan
     console.warn('[0xfastarx] ⚠️ Gagal notif bot disconnect (bot offline?):', err.message);
   }
 }
@@ -173,7 +170,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return status;
       }
 
-      // ── Forward RPC request ke bot ────────────────────────────────────────
+      // ── Forward RPC request ke bot (EVM) ──────────────────────────────────
       case 'rpcRequest': {
         const rpcUrl = buildRpcUrl(config);
         const origin = msg.origin || '';
@@ -202,8 +199,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const accounts = data.result || [];
               if (accounts.length > 0) return { result: accounts };
               
-              // Jika bot online tapi mengembalikan empty array, artinya DApp tidak terhubung di sisi bot.
-              // Hapus status koneksi dari extension storage agar tersinkronisasi.
               console.log(`[0xfastarx] Bot returned empty accounts for ${origin}. Disconnecting in extension.`);
               await disconnectOrigin(origin);
               return { result: [] };
@@ -228,7 +223,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await storageSet(KEY_BOT_STATUS, storedStatus);
           } else if ((msg.method === 'eth_requestAccounts' || msg.method === 'eth_accounts')
               && (!result || result.length === 0)) {
-            // Jika bot online tapi mengembalikan empty array, pastikan di extension juga disconnect!
             await disconnectOrigin(origin);
           }
 
@@ -238,20 +232,105 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
 
-      // ── DApp Disconnect — dikirim dari injector.js ────────────────────────
+      // ── Forward RPC request ke bot (Solana) ───────────────────────────────
+      case 'solanaRpcRequest': {
+        const rpcUrl = buildRpcUrl(config);
+        const origin = msg.origin || '';
+
+        // SESSION PERSISTENCE: solana_accounts tanpa re-approval
+        if (msg.method === 'solana_accounts') {
+          const storedStatus = await storageGet(KEY_BOT_STATUS + '_solana');
+          const originConnected = await isOriginConnected(origin + '_solana');
+
+          if (originConnected && storedStatus && storedStatus.address) {
+            try {
+              const controller = new AbortController();
+              const t = setTimeout(() => controller.abort(), 3000);
+              const headers = { 'Content-Type': 'application/json' };
+              if (config.rpcPassword) {
+                headers['Authorization'] = 'Bearer ' + config.rpcPassword;
+              }
+              const res = await fetch(rpcUrl, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'solana_accounts', params: [] }),
+                signal: controller.signal
+              });
+              clearTimeout(t);
+              const data = await res.json();
+              const accounts = data.result || [];
+              if (accounts.length > 0) return { result: accounts };
+              
+              await disconnectOrigin(origin + '_solana');
+              return { result: [] };
+            } catch (e) {
+              return { result: [storedStatus.address] };
+            }
+          }
+        }
+
+        try {
+          const result = await fetchBotRpc(msg.method, msg.params || [], rpcUrl, origin);
+
+          if ((msg.method === 'solana_requestAccounts' || msg.method === 'solana_accounts')
+              && result && result[0]) {
+            await markOriginConnected(origin + '_solana', result[0]);
+            const storedStatus = {
+              connected: true,
+              address: result[0],
+              lastCheck: new Date().toISOString()
+            };
+            await storageSet(KEY_BOT_STATUS + '_solana', storedStatus);
+          } else if ((msg.method === 'solana_requestAccounts' || msg.method === 'solana_accounts')
+              && (!result || result.length === 0)) {
+            await disconnectOrigin(origin + '_solana');
+          }
+
+          return { result };
+        } catch (err) {
+          return { error: { code: -32603, message: err.message } };
+        }
+      }
+
+      // ── DApp Disconnect (EVM) ─────────────────────────────────────────────
       case 'dappDisconnect': {
         const origin = msg.origin || '';
         const reason = msg.reason || 'unknown';
 
         console.log('[0xfastarx] 🔌 Disconnect diterima dari DApp:', origin, '|', reason);
 
-        // 1. Hapus dari connected origins storage (sehingga reload tidak restore lagi)
         const wasConnected = await disconnectOrigin(origin);
 
         if (wasConnected) {
-          // 2. Kirim notif ke bot agar bot juga hapus dari connectedDapps[]
-          //    dan kirim pesan Telegram ke admin
           await notifyBotDisconnect(config, origin, reason);
+        }
+
+        return { ok: true, wasConnected };
+      }
+
+      // ── DApp Disconnect (Solana) ──────────────────────────────────────────
+      case 'solanaDappDisconnect': {
+        const origin = msg.origin || '';
+        const reason = msg.reason || 'unknown';
+
+        console.log('[0xfastarx] 🔌 Solana Disconnect diterima dari DApp:', origin, '|', reason);
+
+        const wasConnected = await disconnectOrigin(origin + '_solana');
+
+        if (wasConnected) {
+          const rpcUrl = buildRpcUrl(config);
+          try {
+            await fetchBotRpc(
+              'solana_dapp_forceDisconnect',
+              [{ origin, reason }],
+              rpcUrl,
+              origin,
+              5000
+            );
+            console.log('[0xfastarx] ✅ Bot notified: Solana DApp disconnect:', origin);
+          } catch (err) {
+            console.warn('[0xfastarx] ⚠️ Gagal notif bot Solana disconnect:', err.message);
+          }
         }
 
         return { ok: true, wasConnected };
