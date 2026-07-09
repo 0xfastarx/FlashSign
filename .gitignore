@@ -4,3 +4,4 @@ control
 data/
 bot/data/
 node_modules/
+.data/

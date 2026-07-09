@@ -59,6 +59,27 @@ async function checkUserAccess(chatId) {
     return await controllerRequest(`/check?id=${chatId}`);
 }
 
+// ==========================================================
+// == DOWNLOAD EXTENSION — folder ekstensi (relatif ke projectRoot)
+// ==========================================================
+const EXTENSION_SOURCES = {
+    metamask: {
+        folder: 'extension bot metamaks',
+        label: '🦊 MetaMask / Chrome Extension',
+        zipName: 'FASTARX-MetaMask-Chrome-Extension.zip'
+    },
+    bitget: {
+        folder: 'extension bot bitget',
+        label: '💳 Bitget Extension',
+        zipName: 'FASTARX-Bitget-Extension.zip'
+    },
+    firefox: {
+        folder: 'fastarx-firefox extension',
+        label: '🦊 Firefox Extension',
+        zipName: 'FASTARX-Firefox-Extension.zip'
+    }
+};
+
 class TelegramFullController {
     constructor(secureConfig) {
         this.config = secureConfig;
@@ -131,11 +152,11 @@ class TelegramFullController {
             if (!fs.existsSync(envPath)) {
                 return { ok: false, msg: 'File .env tidak ditemukan di folder security/.' };
             }
-            
+
             // Menggunakan approvedHash agar enkripsi sinkron dengan loadConfiguration & tetap stabil
             const integrityGuard = require('../core/integrityGuard');
             const hash = integrityGuard.getApprovedHash() || integrityGuard.calculateProjectHash();
-            
+
             const configKey = crypto.pbkdf2Sync(
                 'FASTARX_CONFIG_KEY_2024' + hash,
                 'CONFIG_SALT_2024',
@@ -255,7 +276,7 @@ class TelegramFullController {
                 ) % 1000000;
                 if (code.toString().padStart(6, '0') === token.toString()) return true;
             }
-        } catch (e) {}
+        } catch (e) { }
         return false;
     }
 
@@ -301,7 +322,7 @@ class TelegramFullController {
             reason,
             chatId: String(chatId),
             timestamp: new Date().toISOString()
-        }).catch(() => {});
+        }).catch(() => { });
 
         // Kirim notifikasi ke user di bot utama
         this.bot.sendMessage(chatId,
@@ -310,14 +331,14 @@ class TelegramFullController {
             `⏱️ Bot akan *restart otomatis dalam 60 detik* untuk menerapkan perubahan.\n\n` +
             `⚠️ _Semua sesi DApp dan RPC akan di-reset. Silakan login ulang setelah bot aktif kembali._`,
             { parse_mode: 'Markdown' }
-        ).catch(() => {});
+        ).catch(() => { });
 
         this._restartTimer = setTimeout(async () => {
             // Kirim notifikasi final
             this.bot.sendMessage(chatId,
                 `🔄 *Restarting...* Memulai ulang Bot Utama sekarang.`,
                 { parse_mode: 'Markdown' }
-            ).catch(() => {});
+            ).catch(() => { });
 
             // Tunggu sebentar agar pesan terkirim
             await new Promise(r => setTimeout(r, 1000));
@@ -990,10 +1011,10 @@ class TelegramFullController {
             connected.forEach((dapp, idx) => {
                 const connectedTime = dapp.connectedAt ? new Date(dapp.connectedAt).toLocaleString() : 'N/A';
                 dappsListText += `${idx + 1}. *${escapeMarkdown(dapp.name)}*\n` +
-                                 `🔗 URL: \`${escapeMarkdown(dapp.url)}\`\n` +
-                                 `📡 Via: ${escapeMarkdown(dapp.via)}\n` +
-                                 `🕑 Waktu: ${escapeMarkdown(connectedTime)}\n\n`;
-                
+                    `🔗 URL: \`${escapeMarkdown(dapp.url)}\`\n` +
+                    `📡 Via: ${escapeMarkdown(dapp.via)}\n` +
+                    `🕑 Waktu: ${escapeMarkdown(connectedTime)}\n\n`;
+
                 // Tambahkan tombol disconnect untuk masing-masing DApp
                 keyboard.push([{ text: `❌ Disconnect: ${dapp.name}`, callback_data: `dapp_disconnect_${dapp.id}` }]);
             });
@@ -1104,16 +1125,16 @@ class TelegramFullController {
         }
 
         let message = `⚡ *KELOLA AUTO APPROVE TX PER RPC (${chainLabel})*\n\n` +
-                      'Klik tombol di bawah untuk mengubah status Auto Approve masing-masing RPC:\n' +
-                      '🟢 *Auto* — Transaksi otomatis dieksekusi.\n' +
-                      '🔴 *Manual* — Transaksi memerlukan konfirmasi (Accept/Reject).\n\n';
+            'Klik tombol di bawah untuk mengubah status Auto Approve masing-masing RPC:\n' +
+            '🟢 *Auto* — Transaksi otomatis dieksekusi.\n' +
+            '🔴 *Manual* — Transaksi memerlukan konfirmasi (Accept/Reject).\n\n';
 
         const keyboard = [];
         rpcList.forEach(([key, rpc]) => {
             const isAuto = rpc.autoApprove !== false;
             const statusLabel = isAuto ? '🟢 Auto' : '🔴 Manual';
             const buttonText = `${rpc.name} (${statusLabel})`;
-            
+
             let callbackData = '';
             if (isEvm) callbackData = `auto_approve_rpc_${key}`;
             else if (isSolana) callbackData = `auto_approve_solrpc_${key}`;
@@ -1136,7 +1157,7 @@ class TelegramFullController {
     async processDappTimerInput(cryptoApp, chatId, text, msg) {
         try {
             await this.bot.deleteMessage(chatId, msg.message_id);
-        } catch (e) {}
+        } catch (e) { }
 
         const minutes = parseInt(text.trim());
         if (isNaN(minutes) || minutes < 0 || minutes > 1440) {
@@ -1451,7 +1472,7 @@ class TelegramFullController {
         try {
             const encrypted = this._encryptData(JSON.stringify(keys), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(filePath, encrypted, 'utf8');
-            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            try { fs.chmodSync(filePath, 0o600); } catch (_) { }
             return true;
         } catch (e) {
             console.error('Failed to encrypt explorer API keys:', e);
@@ -1462,7 +1483,7 @@ class TelegramFullController {
     getTrackedWallets(chatId) {
         const encPath = path.join(projectRoot, `.data/${chatId}_tracked_wallets.enc`);
         const jsonPath = path.join(projectRoot, `.data/${chatId}_tracked_wallets.json`);
-        
+
         if (fs.existsSync(encPath)) {
             try {
                 const raw = fs.readFileSync(encPath, 'utf8');
@@ -1476,7 +1497,7 @@ class TelegramFullController {
             try {
                 const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
                 this.saveTrackedWallets(chatId, data);
-                try { fs.unlinkSync(jsonPath); } catch (_) {}
+                try { fs.unlinkSync(jsonPath); } catch (_) { }
                 return data;
             } catch (e) {
                 console.error('Failed to read tracked wallets json:', e);
@@ -1492,7 +1513,7 @@ class TelegramFullController {
         try {
             const encrypted = this._encryptData(JSON.stringify(wallets), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(filePath, encrypted, 'utf8');
-            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            try { fs.chmodSync(filePath, 0o600); } catch (_) { }
             return true;
         } catch (e) {
             console.error('Failed to save tracked wallets:', e);
@@ -1503,7 +1524,7 @@ class TelegramFullController {
     getTrackerHistory(chatId) {
         const encPath = path.join(projectRoot, `.data/${chatId}_tracker_history.enc`);
         const jsonPath = path.join(projectRoot, `.data/${chatId}_tracker_history.json`);
-        
+
         if (fs.existsSync(encPath)) {
             try {
                 const raw = fs.readFileSync(encPath, 'utf8');
@@ -1517,7 +1538,7 @@ class TelegramFullController {
             try {
                 const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
                 this.saveTrackerHistory(chatId, data);
-                try { fs.unlinkSync(jsonPath); } catch (_) {}
+                try { fs.unlinkSync(jsonPath); } catch (_) { }
                 return data;
             } catch (e) {
                 console.error('Failed to read tracker history json:', e);
@@ -1533,7 +1554,7 @@ class TelegramFullController {
         try {
             const encrypted = this._encryptData(JSON.stringify(history), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(filePath, encrypted, 'utf8');
-            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            try { fs.chmodSync(filePath, 0o600); } catch (_) { }
             return true;
         } catch (e) {
             console.error('Failed to save tracker history:', e);
@@ -1545,7 +1566,7 @@ class TelegramFullController {
         const encPath = path.join(projectRoot, `.data/${chatId}_tracker_state.enc`);
         const jsonPath = path.join(projectRoot, `.data/${chatId}_tracker_state.json`);
         const defaultState = { active: false, lastScannedBlocks: {}, scannedTxHashes: [] };
-        
+
         if (fs.existsSync(encPath)) {
             try {
                 const raw = fs.readFileSync(encPath, 'utf8');
@@ -1559,7 +1580,7 @@ class TelegramFullController {
             try {
                 const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
                 this.saveTrackerState(chatId, data);
-                try { fs.unlinkSync(jsonPath); } catch (_) {}
+                try { fs.unlinkSync(jsonPath); } catch (_) { }
                 return data;
             } catch (e) {
                 console.error('Failed to read tracker state json:', e);
@@ -1575,7 +1596,7 @@ class TelegramFullController {
         try {
             const encrypted = this._encryptData(JSON.stringify(state), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(filePath, encrypted, 'utf8');
-            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            try { fs.chmodSync(filePath, 0o600); } catch (_) { }
             return true;
         } catch (e) {
             console.error('Failed to save tracker state:', e);
@@ -1618,7 +1639,7 @@ class TelegramFullController {
             const data = { language: lang };
             const encrypted = this._encryptData(JSON.stringify(data), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(filePath, encrypted, 'utf8');
-            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            try { fs.chmodSync(filePath, 0o600); } catch (_) { }
             return true;
         } catch (e) {
             console.error('Failed to save user language settings:', e);
@@ -1673,7 +1694,7 @@ class TelegramFullController {
     getManualRpcs(chatId) {
         const encPath = path.join(projectRoot, `.data/${chatId}_manual_rpcs.enc`);
         const jsonPath = path.join(projectRoot, `.data/${chatId}_manual_rpcs.json`);
-        
+
         if (fs.existsSync(encPath)) {
             try {
                 const raw = fs.readFileSync(encPath, 'utf8');
@@ -1687,7 +1708,7 @@ class TelegramFullController {
             try {
                 const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
                 this.saveManualRpcs(chatId, data);
-                try { fs.unlinkSync(jsonPath); } catch (_) {}
+                try { fs.unlinkSync(jsonPath); } catch (_) { }
                 return data;
             } catch (e) {
                 return {};
@@ -1705,7 +1726,7 @@ class TelegramFullController {
         try {
             const encrypted = this._encryptData(JSON.stringify(rpcs), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(filePath, encrypted, 'utf8');
-            try { fs.chmodSync(filePath, 0o600); } catch (_) {}
+            try { fs.chmodSync(filePath, 0o600); } catch (_) { }
         } catch (e) {
             console.error('Failed to save manual rpcs:', e);
         }
@@ -1714,7 +1735,7 @@ class TelegramFullController {
     getManualTokens(chatId, chainId) {
         const encPath = path.join(projectRoot, `.data/${chatId}_manual_tokens.enc`);
         const jsonPath = path.join(projectRoot, `.data/${chatId}_manual_tokens.json`);
-        
+
         let allTokens = {};
         if (fs.existsSync(encPath)) {
             try {
@@ -1730,8 +1751,8 @@ class TelegramFullController {
                 const dir = path.join(projectRoot, '.data');
                 const encrypted = this._encryptData(JSON.stringify(allTokens), this.config.SCRIPT_PASSWORD + chatId);
                 fs.writeFileSync(encPath, encrypted, 'utf8');
-                try { fs.chmodSync(encPath, 0o600); } catch (_) {}
-                try { fs.unlinkSync(jsonPath); } catch (_) {}
+                try { fs.chmodSync(encPath, 0o600); } catch (_) { }
+                try { fs.unlinkSync(jsonPath); } catch (_) { }
             } catch (e) {
                 allTokens = {};
             }
@@ -1746,32 +1767,32 @@ class TelegramFullController {
         }
         const encPath = path.join(dir, `${chatId}_manual_tokens.enc`);
         const jsonPath = path.join(dir, `${chatId}_manual_tokens.json`);
-        
+
         let allTokens = {};
         if (fs.existsSync(encPath)) {
             try {
                 const raw = fs.readFileSync(encPath, 'utf8');
                 const decrypted = this._decryptData(raw, this.config.SCRIPT_PASSWORD + chatId);
                 allTokens = JSON.parse(decrypted);
-            } catch (e) {}
+            } catch (e) { }
         } else if (fs.existsSync(jsonPath)) {
             try {
                 allTokens = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-            } catch (e) {}
+            } catch (e) { }
         }
-        
+
         if (!allTokens[chainId]) {
             allTokens[chainId] = [];
         }
         if (!allTokens[chainId].some(t => t.address.toLowerCase() === tokenInfo.address.toLowerCase())) {
             allTokens[chainId].push(tokenInfo);
         }
-        
+
         try {
             const encrypted = this._encryptData(JSON.stringify(allTokens), this.config.SCRIPT_PASSWORD + chatId);
             fs.writeFileSync(encPath, encrypted, 'utf8');
-            try { fs.chmodSync(encPath, 0o600); } catch (_) {}
-            try { fs.unlinkSync(jsonPath); } catch (_) {}
+            try { fs.chmodSync(encPath, 0o600); } catch (_) { }
+            try { fs.unlinkSync(jsonPath); } catch (_) { }
         } catch (e) {
             console.error('Failed to save manual tokens:', e);
         }
@@ -1783,7 +1804,7 @@ class TelegramFullController {
         Object.entries(MANUAL_NETWORKS).forEach(([key, net]) => {
             keyboard.push([{ text: `🌐 ${net.name}`, callback_data: `tm_pick_net_default_${key}` }]);
         });
-        
+
         keyboard.push([{ text: '🌐 Jaringan Lain nya', callback_data: 'tm_menu_other_networks' }]);
         keyboard.push([{ text: '🔑 Setup Explorer API Keys', callback_data: 'tm_setup_api_keys' }]);
         keyboard.push([{ text: '🔙 Kembali', callback_data: 'menu_lainnya' }]);
@@ -1797,7 +1818,7 @@ class TelegramFullController {
 
     async showExplorerApiKeysMenu(chatId) {
         const keys = this.getExplorerApiKeys(chatId);
-        
+
         const mask = (val) => val ? `${val.slice(0, 6)}...${val.slice(-4)}` : '🔴 Belum diset';
 
         const keyboard = [
@@ -1818,7 +1839,7 @@ class TelegramFullController {
     async showAssetDashboard(chatId, state) {
         try {
             await this.bot.sendMessage(chatId, '🔄 Menghubungkan provider & memuat riwayat transaksi...');
-            
+
             const provider = new ethers.JsonRpcProvider(state.network.rpc);
             const balance = await provider.getBalance(state.wallet.address);
             const balanceFormatted = ethers.formatEther(balance);
@@ -1826,7 +1847,7 @@ class TelegramFullController {
 
             // Ambil API keys
             const apiKeys = this.getExplorerApiKeys(chatId);
-            
+
             const chainId = state.network.chainId;
             let url = '';
 
@@ -1918,10 +1939,10 @@ class TelegramFullController {
             }
 
             // Lihat transaksi lainnya
-            const explorerUrl = state.network.explorer 
+            const explorerUrl = state.network.explorer
                 ? `${state.network.explorer}/address/${state.wallet.address}`
                 : null;
-            
+
             const bottomRow = [];
             if (explorerUrl) {
                 bottomRow.push({ text: '🔍 Lihat Transaksi Lainnya', url: explorerUrl });
@@ -1930,7 +1951,7 @@ class TelegramFullController {
             keyboard.push(bottomRow);
 
             const assetLabel = state.asset.type === 'native' ? 'Native Coin' : `${state.asset.name} (${state.asset.symbol})`;
-            let dashboardText = 
+            let dashboardText =
                 `📊 *DASHBOARD ASET — TRANSFER MANUAL*\n\n` +
                 `🌐 Jaringan: *${state.network.name}*\n` +
                 `🪙 Aset: *${assetLabel}*\n` +
@@ -1976,7 +1997,7 @@ class TelegramFullController {
         const decimals = tx.tokenDecimal ? parseInt(tx.tokenDecimal) : (state.asset.decimals || 18);
         const amountFormatted = ethers.formatUnits(amountRaw, decimals);
         const symbol = tx.tokenSymbol || state.asset.symbol || 'Native';
-        
+
         let gasCostFormatted = 'N/A';
         if (tx.gasUsed && tx.gasPrice) {
             const gasCostRaw = BigInt(tx.gasUsed) * BigInt(tx.gasPrice);
@@ -1986,7 +2007,7 @@ class TelegramFullController {
         const date = tx.timeStamp ? new Date(parseInt(tx.timeStamp) * 1000).toLocaleString('id-ID') : 'N/A';
         const isErr = tx.isError === '1';
 
-        let detailText = 
+        let detailText =
             `📋 *DETAIL TRANSAKSI*\n\n` +
             `🏷️ Tipe: *${typeLabel}*\n` +
             `✅ Status: *${isErr ? '🔴 Gagal' : '🟢 Sukses'}*\n\n` +
@@ -2001,7 +2022,7 @@ class TelegramFullController {
             `📅 *Waktu:* \`${date}\`\n`;
 
         const keyboard = [];
-        
+
         if (state.network.explorer && tx.hash) {
             keyboard.push([{ text: '🔍 Lihat di Explorer', url: `${state.network.explorer}/tx/${tx.hash}` }]);
         }
@@ -2017,7 +2038,7 @@ class TelegramFullController {
     async showManualTransferOtherNetworks(chatId) {
         const keyboard = [];
         const customRpcs = this.getManualRpcs(chatId);
-        
+
         Object.entries(customRpcs).forEach(([key, rpc]) => {
             keyboard.push([{ text: `🌐 ${rpc.name} (${rpc.chainId})`, callback_data: `tm_pick_net_custom_${key}` }]);
         });
@@ -2069,7 +2090,7 @@ class TelegramFullController {
                 await this.startAddManualRpcFlow(chatId, 4, data);
             } else if (step === 4) {
                 data.explorer = input === '/skip' ? '' : input;
-                
+
                 // Save custom rpc
                 const customRpcs = this.getManualRpcs(chatId);
                 const key = `custom_${Date.now()}`;
@@ -2191,7 +2212,7 @@ class TelegramFullController {
             this.bot.sendMessage(chatId, '🔍 Mendeteksi detail token...');
             const provider = new ethers.JsonRpcProvider(userState.network.rpc);
             const tokenContract = new ethers.Contract(address, ERC20_ABI, provider);
-            
+
             const [name, symbol, decimals] = await Promise.all([
                 tokenContract.name(),
                 tokenContract.symbol(),
@@ -2252,7 +2273,7 @@ class TelegramFullController {
             await this.bot.sendMessage(chatId, '⛽ Menghitung estimasi gas fee...');
             const provider = new ethers.JsonRpcProvider(state.network.rpc);
             const feeData = await provider.getFeeData();
-            
+
             const gasLimit = state.asset.type === 'native' ? 21000n : 100000n;
             const baseGasPrice = feeData.gasPrice || feeData.maxFeePerGas || ethers.parseUnits('10', 'gwei');
 
@@ -2330,7 +2351,7 @@ class TelegramFullController {
         this.userStates.delete(chatId);
         try {
             await this.bot.sendMessage(chatId, '⏳ *Sedang memproses transaksi...*', { parse_mode: 'Markdown' });
-            
+
             const provider = new ethers.JsonRpcProvider(state.network.rpc);
             const wallet = new ethers.Wallet(state.wallet.privateKey, provider);
 
@@ -2362,7 +2383,7 @@ class TelegramFullController {
             );
 
             const receipt = await tx.wait();
-            
+
             if (receipt.status === 1) {
                 await this.bot.sendMessage(chatId,
                     `🎉 *TRANSAKSI SELESAI & SUKSES CONFRIMED!*\n\n` +
@@ -3041,7 +3062,7 @@ class TelegramFullController {
      */
     async processBackupPasswordInput(cryptoApp, chatId, text, userState, msg) {
         // Hapus pesan berisi sandi dari chat
-        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
 
         const input = text.trim();
 
@@ -3726,7 +3747,7 @@ class TelegramFullController {
 
             // Inisialisasi koneksi Solana
             const solRpcUrl = cryptoApp.currentSolanaRpc || 'https://api.mainnet-beta.solana.com';
-            
+
             // Cari commitment level jika ada
             let commitment = 'confirmed';
             if (cryptoApp.savedSolanaRpcs) {
@@ -4311,10 +4332,10 @@ class TelegramFullController {
 
         const activeRpc = cryptoApp.currentSolanaRpcName || 'Tidak ada';
         const url = cryptoApp.currentSolanaRpc || 'Belum diatur';
-        
+
         let priorityFee = 'Medium';
         let commitment = 'confirmed';
-        
+
         // Cari info dari savedRpcs
         if (cryptoApp.savedSolanaRpcs) {
             for (const key in cryptoApp.savedSolanaRpcs) {
@@ -5919,7 +5940,7 @@ class TelegramFullController {
                 }
                 const oldUrl = rpc.rpc;
                 rpc.rpc = input.trim();
-                
+
                 if (cryptoApp.currentRpc === oldUrl) {
                     cryptoApp.currentRpc = rpc.rpc;
                     cryptoApp.setupProvider();
@@ -6028,9 +6049,9 @@ class TelegramFullController {
         };
 
         let msg = `🔗 *KELOLA URL RPC: ${rpc.name}*\n\n` +
-                  `🔗 URL Utama: \`${rpc.rpc}\`\n\n` +
-                  `📋 URL Cadangan (${backups.length}):\n`;
-        
+            `🔗 URL Utama: \`${rpc.rpc}\`\n\n` +
+            `📋 URL Cadangan (${backups.length}):\n`;
+
         if (backups.length === 0) {
             msg += `_(Tidak ada URL cadangan)_\n`;
         } else {
@@ -6760,6 +6781,80 @@ class TelegramFullController {
         );
     }
 
+    async showDownloadExtensionMenu(chatId) {
+        const buttons = Object.entries(EXTENSION_SOURCES).map(([key, ext]) => (
+            [{ text: ext.label, callback_data: `dl_ext_${key}` }]
+        ));
+        buttons.push([{ text: '🔙 Kembali', callback_data: 'rpc_inject_menu' }]);
+
+        this.bot.sendMessage(chatId,
+            `📦 *DOWNLOAD BROWSER EXTENSION*\n\nSilakan pilih ekstensi yang ingin Anda unduh:`,
+            { parse_mode: 'Markdown', reply_markup: { inline_keyboard: buttons } }
+        );
+    }
+
+    async processDownloadExtension(cryptoApp, chatId, extensionType) {
+        const ext = EXTENSION_SOURCES[extensionType];
+        if (!ext) {
+            this.bot.sendMessage(chatId, '❌ Tipe ekstensi tidak dikenali.');
+            await this.showDownloadExtensionMenu(chatId);
+            return;
+        }
+
+        const sourceDir = path.join(projectRoot, ext.folder);
+        if (!fs.existsSync(sourceDir)) {
+            this.bot.sendMessage(chatId, '❌ File ekstensi tidak ditemukan.');
+            await this.showRpcInjectMenu(cryptoApp, chatId);
+            return;
+        }
+
+        const os = require('os');
+        const { execFile } = require('child_process');
+        const zipFilePath = path.join(os.tmpdir(), `fastarx_ext_${extensionType}_${Date.now()}.zip`);
+
+        await this.bot.sendMessage(chatId, `⏳ Sedang mengompres ekstensi, harap tunggu...`);
+
+        try {
+            // Kompresi via system `zip` (opsi paling ringan, tidak menambah dependency
+            // eksternal ke bundle pkg). cwd di-set ke projectRoot supaya isi zip
+            // relatif terhadap nama folder ekstensi, bukan absolute path.
+            await new Promise((resolve, reject) => {
+                execFile(
+                    'zip',
+                    ['-r', '-q', zipFilePath, ext.folder],
+                    { cwd: projectRoot, maxBuffer: 1024 * 1024 * 50 },
+                    (error) => {
+                        if (error) return reject(error);
+                        resolve();
+                    }
+                );
+            });
+
+            if (!fs.existsSync(zipFilePath)) {
+                throw new Error('Berkas zip tidak berhasil dibuat.');
+            }
+
+            await this.bot.sendDocument(chatId,
+                fs.createReadStream(zipFilePath),
+                { caption: `✅ ${ext.label}` },
+                { filename: ext.zipName, contentType: 'application/zip' }
+            );
+
+            this.bot.sendMessage(chatId, `✅ Ekstensi berhasil dikirim!`);
+        } catch (error) {
+            const hint = (error && error.code === 'ENOENT')
+                ? ' (perintah `zip` tidak ditemukan di server — jalankan `apt-get install -y zip`)'
+                : '';
+            console.error('❌ [Download Extension] Gagal mengompres:', error.message);
+            this.bot.sendMessage(chatId, `❌ Gagal mengompres ekstensi: ${error.message}${hint}`);
+        } finally {
+            // Selalu bersihkan file zip sementara dari server
+            try { if (fs.existsSync(zipFilePath)) fs.unlinkSync(zipFilePath); } catch (e) { /* ignore */ }
+        }
+
+        await this.showRpcInjectMenu(cryptoApp, chatId);
+    }
+
     async startRpcInjectServer(cryptoApp, chatId, port, vpsMode = null, password = null) {
         if (!cryptoApp.wallet) {
             this.bot.sendMessage(chatId, '❌ Pilih wallet aktif dulu sebelum start RPC server.');
@@ -7102,13 +7197,13 @@ class TelegramFullController {
                     this.bot.sendMessage(chatId,
                         `✅ *OTP Terverifikasi!* Memulai alur ganti Password ${label}...`,
                         { parse_mode: 'Markdown' }
-                    ).catch(() => {});
+                    ).catch(() => { });
                     setTimeout(() => this.startOwnerChangePassword(chatId, pwType), 500);
                 } else {
                     this.bot.sendMessage(chatId,
                         `❌ *Kode OTP salah.* Silakan coba lagi atau ketik /cancel untuk membatalkan.`,
                         { parse_mode: 'Markdown' }
-                    ).catch(() => {});
+                    ).catch(() => { });
                 }
                 break;
             }
@@ -7295,7 +7390,7 @@ class TelegramFullController {
         // Global: hentikan loading spinner di semua tombol sebelum proses apapun
         // (kecuali dapp_approval_toggle yang punya answerCallbackQuery sendiri dengan custom text)
         if (data !== 'dapp_approval_toggle' && data !== 'dapp_approval_toggle_new' && data !== 'dapp_connection_info_alert' && data !== 'auto_approve_menu' && !data.startsWith('auto_approve_rpc_') && !data.startsWith('auto_approve_solrpc_') && !data.startsWith('auto_approve_chain_') && !data.startsWith('dapp_connect_approve_') && !data.startsWith('dapp_connect_reject_') && !data.startsWith('tx_approve_') && !data.startsWith('tx_reject_') && !data.startsWith('rpc_inject_usedbyother_')) {
-            this.bot.answerCallbackQuery(query.id).catch(() => {});
+            this.bot.answerCallbackQuery(query.id).catch(() => { });
         }
 
         const cryptoApp = this.userSessions.get(chatId);
@@ -7830,20 +7925,20 @@ class TelegramFullController {
                 const currentLang = await this.getUserLanguage(chatId);
                 const newLang = currentLang === 'en' ? 'id' : 'en';
                 await this.setUserLanguage(chatId, newLang);
-                
-                const successMsg = newLang === 'en' 
-                    ? '🇺🇸 Language changed to English successfully!' 
+
+                const successMsg = newLang === 'en'
+                    ? '🇺🇸 Language changed to English successfully!'
                     : '🇮🇩 Bahasa berhasil diubah ke Bahasa Indonesia!';
-                
+
                 await this.bot.sendMessage(chatId, successMsg);
                 this.showPengaturanMenu(chatId);
             }
             else if (data === 'migration_menu') {
-                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) { }
                 this.showMigrationMenu(chatId);
             }
             else if (data === 'migration_backup') {
-                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) { }
                 this.userStates.set(chatId, { action: 'migration_awaiting_backup_password' });
                 this.bot.sendMessage(chatId,
                     `📤 *BACKUP DATA — BUAT PASSWORD*\n\n` +
@@ -7858,7 +7953,7 @@ class TelegramFullController {
                 );
             }
             else if (data === 'migration_import') {
-                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) { }
                 this.userStates.set(chatId, { action: 'awaiting_backup_upload' });
                 this.bot.sendMessage(chatId,
                     `📥 *IMPOR DATA — UNGGAH FILE CADANGAN*\n\n` +
@@ -7883,7 +7978,7 @@ class TelegramFullController {
                         text: `🔐 DApp Connection: ${statusStr}`,
                         show_alert: false
                     });
-                    try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                    try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) { }
                     this.showDappsMenu(chatId);
                 }
             }
@@ -7891,7 +7986,7 @@ class TelegramFullController {
             else if (data === 'dapps_menu') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 this.showDappsMenu(chatId);
             }
             else if (data === 'dapp_connection_toggle' || data === 'dapp_approval_toggle_new' || data === 'dapp_connection_info_alert') {
@@ -7904,7 +7999,7 @@ class TelegramFullController {
                         text: `🔐 DApp Connection: ${statusStr}`,
                         show_alert: false
                     });
-                    try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) {}
+                    try { await this.bot.deleteMessage(chatId, query.message.message_id); } catch (e) { }
                     this.showDappsMenu(chatId);
                 }
             }
@@ -7928,7 +8023,7 @@ class TelegramFullController {
 
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 this.showDappsMenu(chatId);
             }
             else if (data === 'dapp_timer_settings') {
@@ -7990,27 +8085,27 @@ class TelegramFullController {
             else if (data === 'auto_approve_menu') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 this.showAutoApproveChainSelectMenu(chatId);
             }
             // Pilih chain EVM untuk Auto Approve
             else if (data === 'auto_approve_chain_evm') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'evm');
             }
             // Pilih chain Solana untuk Auto Approve
             else if (data === 'auto_approve_chain_solana') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'solana');
             }
             else if (data === 'auto_approve_chain_aptos') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'aptos');
             }
             // [v20.1] Toggle Auto Approve per RPC (EVM)
@@ -8020,10 +8115,10 @@ class TelegramFullController {
                 if (rpc) {
                     rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
                     cryptoApp.saveRpcConfig();
-                    
+
                     const newStatus = rpc.autoApprove !== false;
                     const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
-                    
+
                     await this.bot.answerCallbackQuery(query.id, {
                         text: `${rpc.name}: ${statusText}`,
                         show_alert: false
@@ -8034,10 +8129,10 @@ class TelegramFullController {
                         show_alert: true
                     });
                 }
-                
+
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'evm');
             }
             // Toggle Auto Approve per RPC (Solana)
@@ -8047,10 +8142,10 @@ class TelegramFullController {
                 if (rpc) {
                     rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
                     cryptoApp.saveSolanaRpcConfig();
-                    
+
                     const newStatus = rpc.autoApprove !== false;
                     const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
-                    
+
                     await this.bot.answerCallbackQuery(query.id, {
                         text: `${rpc.name}: ${statusText}`,
                         show_alert: false
@@ -8061,10 +8156,10 @@ class TelegramFullController {
                         show_alert: true
                     });
                 }
-                
+
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'solana');
             }
             // Toggle Auto Approve per RPC (Aptos)
@@ -8074,10 +8169,10 @@ class TelegramFullController {
                 if (rpc) {
                     rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
                     cryptoApp.saveAptosRpcConfig();
-                    
+
                     const newStatus = rpc.autoApprove !== false;
                     const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
-                    
+
                     await this.bot.answerCallbackQuery(query.id, {
                         text: `${rpc.name}: ${statusText}`,
                         show_alert: false
@@ -8088,17 +8183,17 @@ class TelegramFullController {
                         show_alert: true
                     });
                 }
-                
+
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'aptos');
             }
             // Pilih chain Sui untuk Auto Approve
             else if (data === 'auto_approve_chain_sui') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'sui');
             }
             // Toggle Auto Approve per RPC (Sui)
@@ -8108,10 +8203,10 @@ class TelegramFullController {
                 if (rpc) {
                     rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
                     cryptoApp.saveSuiRpcConfig();
-                    
+
                     const newStatus = rpc.autoApprove !== false;
                     const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
-                    
+
                     await this.bot.answerCallbackQuery(query.id, {
                         text: `${rpc.name}: ${statusText}`,
                         show_alert: false
@@ -8122,17 +8217,17 @@ class TelegramFullController {
                         show_alert: true
                     });
                 }
-                
+
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'sui');
             }
             // Pilih chain TON untuk Auto Approve
             else if (data === 'auto_approve_chain_ton') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'ton');
             }
             // Toggle Auto Approve per RPC (TON)
@@ -8142,10 +8237,10 @@ class TelegramFullController {
                 if (rpc) {
                     rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
                     cryptoApp.saveTonRpcConfig();
-                    
+
                     const newStatus = rpc.autoApprove !== false;
                     const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
-                    
+
                     await this.bot.answerCallbackQuery(query.id, {
                         text: `${rpc.name}: ${statusText}`,
                         show_alert: false
@@ -8156,17 +8251,17 @@ class TelegramFullController {
                         show_alert: true
                     });
                 }
-                
+
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'ton');
             }
             // Pilih chain NEAR untuk Auto Approve
             else if (data === 'auto_approve_chain_near') {
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'near');
             }
             // Toggle Auto Approve per RPC (NEAR)
@@ -8176,10 +8271,10 @@ class TelegramFullController {
                 if (rpc) {
                     rpc.autoApprove = rpc.autoApprove === undefined ? false : !rpc.autoApprove;
                     cryptoApp.saveNearRpcConfig();
-                    
+
                     const newStatus = rpc.autoApprove !== false;
                     const statusText = newStatus ? 'Auto (🟢)' : 'Manual (🔴)';
-                    
+
                     await this.bot.answerCallbackQuery(query.id, {
                         text: `${rpc.name}: ${statusText}`,
                         show_alert: false
@@ -8190,10 +8285,10 @@ class TelegramFullController {
                         show_alert: true
                     });
                 }
-                
+
                 try {
                     await this.bot.deleteMessage(chatId, query.message.message_id);
-                } catch (e) {}
+                } catch (e) { }
                 await this.showAutoApproveTxMenu(chatId, 'near');
             }
             // [v20.1] Transaction/Sign Approve/Reject callbacks
@@ -8243,7 +8338,7 @@ class TelegramFullController {
                         `⚠️ *2FA belum dikonfigurasi.* Ganti password tanpa verifikasi.\n` +
                         `Disarankan mengaktifkan 2FA melalui Controller Bot.`,
                         { parse_mode: 'Markdown' }
-                    ).catch(() => {});
+                    ).catch(() => { });
                     this.startOwnerChangePassword(chatId, pwType);
                 } else {
                     // 2FA ada — minta OTP dulu
@@ -8257,7 +8352,7 @@ class TelegramFullController {
                             parse_mode: 'Markdown',
                             reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'owner_change_password_menu' }]] }
                         }
-                    ).catch(() => {});
+                    ).catch(() => { });
                 }
             }
             else if (data === 'owner_change_backup_pw') {
@@ -8335,7 +8430,7 @@ class TelegramFullController {
                         state.selectedNetworks.push(netKey);
                     }
                     this.userStates.set(chatId, state);
-                    
+
                     // Edit message markup to reflect toggled option
                     const keyboard = [];
                     const keys = Object.keys(TRACKER_NETWORKS);
@@ -8360,7 +8455,7 @@ class TelegramFullController {
                     ]);
                     keyboard.push([{ text: '💾 Simpan & Selesai', callback_data: 'tracker_save_wallet' }]);
 
-                    this.bot.editMessageReplyMarkup({ inline_keyboard: keyboard }, { chat_id: chatId, message_id: query.message.message_id }).catch(() => {});
+                    this.bot.editMessageReplyMarkup({ inline_keyboard: keyboard }, { chat_id: chatId, message_id: query.message.message_id }).catch(() => { });
                 }
             }
             else if (data === 'tracker_net_all') {
@@ -8789,7 +8884,7 @@ class TelegramFullController {
                 state.action = 'manual_transfer_awaiting_token_add';
                 this.userStates.set(chatId, state);
                 this.bot.sendMessage(chatId,
-                    '🪙 *TAMBAH TOKEN*\n\nKirim alamat kontrak token ERC-20 (0x...):', 
+                    '🪙 *TAMBAH TOKEN*\n\nKirim alamat kontrak token ERC-20 (0x...):',
                     { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'transfer_manual_menu' }]] } }
                 );
             }
@@ -8905,7 +9000,7 @@ class TelegramFullController {
                 this.bot.answerCallbackQuery(query.id, {
                     text: `⚠️ Port ${port} sedang aktif digunakan oleh user lain!`,
                     show_alert: true
-                }).catch(() => {});
+                }).catch(() => { });
             }
             else if (data.startsWith('rpc_inject_togglemode_')) {
                 const port = parseInt(data.replace('rpc_inject_togglemode_', ''));
@@ -8969,6 +9064,13 @@ class TelegramFullController {
                 }
                 this.userStates.delete(chatId);
                 await this.showRpcInjectMenu(cryptoApp, chatId);
+            }
+            else if (data === 'rpc_inject_downloadext') {
+                await this.showDownloadExtensionMenu(chatId);
+            }
+            else if (data.startsWith('dl_ext_')) {
+                const extensionType = data.replace('dl_ext_', '');
+                await this.processDownloadExtension(cryptoApp, chatId, extensionType);
             }
 
             this.bot.answerCallbackQuery(query.id);
@@ -9045,7 +9147,7 @@ class TelegramFullController {
         }
 
         const encryptedText = morse.encryptMultiCipher(text, allMorseCiphers);
-        
+
         // Save temporary state for save prompt (originalText TIDAK disimpan untuk keamanan)
         this.userStates.set(chatId, {
             action: 'morse_awaiting_save_decision',
@@ -9455,7 +9557,7 @@ class TelegramFullController {
 
     async processMigrationBackupPassword(chatId, password, msg) {
         // Hapus pesan password dari chat demi keamanan
-        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
 
         const statusMsg = await this.bot.sendMessage(chatId, '⏳ *Sedang memproses dan mengenkripsi data backup Anda...*', { parse_mode: 'Markdown' });
 
@@ -9469,15 +9571,15 @@ class TelegramFullController {
                 backupBuffer,
                 {
                     caption: `🔐 *BACKUP DATA FASTARX BOT BERHASIL!*\n\n` +
-                             `File ini berisi seluruh data Anda dalam bentuk terenkripsi:\n` +
-                             `• Wallet & Master Key\n` +
-                             `• Konfigurasi RPC & Port\n` +
-                             `• Explorer API Keys\n` +
-                             `• Tracked Wallets & History\n` +
-                             `• Manual RPC & Token\n` +
-                             `• Pesan Morse Cipher\n` +
-                             `• Backup Password Guard\n\n` +
-                             `⚠️ *PERINGATAN*: Jangan membagikan file ini kepada siapa pun. Jangan lupa password yang telah Anda buat.`
+                        `File ini berisi seluruh data Anda dalam bentuk terenkripsi:\n` +
+                        `• Wallet & Master Key\n` +
+                        `• Konfigurasi RPC & Port\n` +
+                        `• Explorer API Keys\n` +
+                        `• Tracked Wallets & History\n` +
+                        `• Manual RPC & Token\n` +
+                        `• Pesan Morse Cipher\n` +
+                        `• Backup Password Guard\n\n` +
+                        `⚠️ *PERINGATAN*: Jangan membagikan file ini kepada siapa pun. Jangan lupa password yang telah Anda buat.`
                 },
                 {
                     filename: `fastarx_backup_${chatId}.enc`,
@@ -9485,13 +9587,13 @@ class TelegramFullController {
                 }
             );
 
-            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
             this.userStates.delete(chatId);
 
             this.bot.sendMessage(chatId, '✅ *Proses Selesai.* File backup telah dikirim di atas.', { parse_mode: 'Markdown' });
 
         } catch (error) {
-            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
             console.error('❌ Gagal memproses backup:', error);
             this.bot.sendMessage(chatId, `❌ *Gagal memproses backup!*\nTerjadi kesalahan: \`${error.message}\``, { parse_mode: 'Markdown' });
             this.userStates.delete(chatId);
@@ -9500,7 +9602,7 @@ class TelegramFullController {
 
     async processMigrationImportPassword(chatId, password, userState, msg) {
         // Hapus pesan password dari chat demi keamanan
-        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) {}
+        try { await this.bot.deleteMessage(chatId, msg.message_id); } catch (e) { }
 
         const statusMsg = await this.bot.sendMessage(chatId, '⏳ *Sedang mendekripsi dan memulihkan data Anda...*', { parse_mode: 'Markdown' });
 
@@ -9511,7 +9613,7 @@ class TelegramFullController {
             // Panggil restoreBackup
             backupHelper.restoreBackup(chatId, password, backupData, dataDir);
 
-            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
             this.userStates.delete(chatId);
 
             // Re-inisialisasi / reload sesi cryptoApp agar memuat data baru secara real-time
@@ -9540,8 +9642,8 @@ class TelegramFullController {
             );
 
         } catch (error) {
-            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) {}
-            
+            try { await this.bot.deleteMessage(chatId, statusMsg.message_id); } catch (e) { }
+
             userState.attempts = (userState.attempts || 0) + 1;
             const remaining = 3 - userState.attempts;
 
@@ -9592,7 +9694,7 @@ class TelegramFullController {
         const state = this.getTrackerState(chatId);
         const wallets = this.getTrackedWallets(chatId);
         const statusText = state.active ? '🟢 AKTIF' : '🔴 NON-AKTIF';
-        
+
         const keyboard = [
             [
                 { text: '➕ Tambah Wallet', callback_data: 'tracker_add_wallet' },
@@ -9630,9 +9732,9 @@ class TelegramFullController {
         wallets.forEach((w, idx) => {
             const truncated = `${w.address.slice(0, 6)}...${w.address.slice(-4)}`;
             txt += `*${idx + 1}. ${w.name}*\n` +
-                   `• Address: \`${w.address}\`\n` +
-                   `• Jaringan: ${w.networks.map(n => TRACKER_NETWORKS[n]?.name || n).join(', ')}\n\n`;
-            
+                `• Address: \`${w.address}\`\n` +
+                `• Jaringan: ${w.networks.map(n => TRACKER_NETWORKS[n]?.name || n).join(', ')}\n\n`;
+
             keyboard.push([{ text: `🗑️ Hapus: ${w.name}`, callback_data: `tracker_del_wallet_${idx}` }]);
         });
 
@@ -9861,7 +9963,7 @@ class TelegramFullController {
     showTrackerAddChainsMenu(chatId, state) {
         const keyboard = [];
         const keys = Object.keys(TRACKER_NETWORKS);
-        
+
         for (let i = 0; i < keys.length; i += 2) {
             const row = [];
             const key1 = keys[i];
@@ -10119,8 +10221,8 @@ class TelegramFullController {
                             const raw = await this._trackerHttpGet(nativeUrl);
                             const res = JSON.parse(raw);
                             if (res && res.result && Array.isArray(res.result)) {
-                                const newTxs = res.result.filter(tx => 
-                                    tx.to && tx.to.toLowerCase() === walletLower && 
+                                const newTxs = res.result.filter(tx =>
+                                    tx.to && tx.to.toLowerCase() === walletLower &&
                                     !state.scannedTxHashes.includes(tx.hash)
                                 );
 
@@ -10199,8 +10301,8 @@ class TelegramFullController {
                             const raw = await this._trackerHttpGet(tokenUrl);
                             const res = JSON.parse(raw);
                             if (res && res.result && Array.isArray(res.result)) {
-                                const newTxs = res.result.filter(tx => 
-                                    tx.to && tx.to.toLowerCase() === walletLower && 
+                                const newTxs = res.result.filter(tx =>
+                                    tx.to && tx.to.toLowerCase() === walletLower &&
                                     !state.scannedTxHashes.includes(tx.hash)
                                 );
 
