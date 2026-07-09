@@ -42,7 +42,7 @@ class CryptoAutoTx {
         this.isConnected = false;
         this.session = null;
 
-        // [v19] MetaMask RPC Inject — Multi-port manager
+        // [v19] Extension Inject — Multi-port manager
         // Map<port, MetaMaskRpcServer>
         this.rpcServers = new Map();
         // Config port tersimpan: { port, vpsMode, isPermanent, label }
@@ -1520,7 +1520,7 @@ class CryptoAutoTx {
         console.log('⛓️ Chain ID  :', this.currentChainId);
         console.log('🌐 RPC      :', this.currentRpcName);
         console.log('💼 Wallets  :', Object.keys(wallets).length);
-        console.log('🦊 RPC Inject:', rpcStatus);
+        console.log('🦊 Extension Inject:', rpcStatus);
         console.log('='.repeat(60));
         // ── Tampilkan info 2FA real-time di menu utama ──
         const tfa2 = new TwoFactorAuth(this.dataDir);
@@ -1530,7 +1530,7 @@ class CryptoAutoTx {
         console.log('='.repeat(60));
         console.log('Pilih Mode:');
         console.log('1. Setup Wallet & Connect WalletConnect');
-        console.log('2. 🦊 MetaMask RPC Inject [BARU]');
+        console.log('2. 🦊 Extension Inject [BARU]');
         console.log('3. Cek Balance & Transaction Stats');
         console.log('4. Kelola Wallet');
         console.log('5. Pengaturan RPC');
@@ -1840,7 +1840,7 @@ class CryptoAutoTx {
     }
 
     // ============================================================
-    // [v20] METAMASK RPC INJECT — MULTI-PORT MANAGER
+    // [v20] EXTENSION INJECT — MULTI-PORT MANAGER
     // ============================================================
 
     // --- Port config persistence ---
@@ -1924,7 +1924,7 @@ class CryptoAutoTx {
             if (this.bot && this.sessionNotificationChatId) {
                 const info = server.getConnectionInfo();
                 await this.bot.sendMessage(this.sessionNotificationChatId,
-                    `🦊 [${this.sessionId}] RPC INJECT AKTIF!\n\n` +
+                    `🦊 [${this.sessionId}] EXTENSION INJECT AKTIF!\n\n` +
                     `🔌 Mode  : ${info.modeLabel}\n` +
                     `🔗 URL   : ${info.rpcUrl}\n` +
                     `⛓️ Chain : ${info.chainId} (${info.chainIdHex})\n` +
@@ -2023,7 +2023,7 @@ class CryptoAutoTx {
 
         while (true) {
             console.log('\n' + '='.repeat(55));
-            console.log('🦊 METAMASK RPC INJECT — PORT MANAGER');
+            console.log('🦊 EXTENSION INJECT — PORT MANAGER');
             console.log('='.repeat(55));
 
             const allPorts = this.getAllRpcPortsStatus();

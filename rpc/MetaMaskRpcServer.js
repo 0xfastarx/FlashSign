@@ -35,7 +35,7 @@ class MetaMaskRpcServer {
 
     async start() {
         if (this.isRunning) {
-            console.log(`[RPC Inject] Server sudah berjalan di port ${this.port}`);
+            console.log(`[Extension Inject] Server sudah berjalan di port ${this.port}`);
             return true;
         }
 
@@ -66,7 +66,7 @@ class MetaMaskRpcServer {
                     const authHeader = req.headers['authorization'];
                     const expectedAuth = `Bearer ${this.password}`;
                     if (authHeader !== expectedAuth) {
-                        console.log(`[RPC Inject] ❌ Unauthorized request to port ${this.port}`);
+                        console.log(`[Extension Inject] ❌ Unauthorized request to port ${this.port}`);
                         res.writeHead(401);
                         res.end(JSON.stringify({
                             jsonrpc: '2.0',
@@ -80,7 +80,7 @@ class MetaMaskRpcServer {
                 // FIX: Handle GET request — MetaMask kadang kirim GET untuk health check
                 if (req.method === 'GET') {
                     res.writeHead(200);
-                    res.end(JSON.stringify({ status: 'ok', bot: '0xfastarx RPC Inject' }));
+                    res.end(JSON.stringify({ status: 'ok', bot: '0xfastarx Extension Inject' }));
                     return;
                 }
 
@@ -117,7 +117,7 @@ class MetaMaskRpcServer {
                             res.end(JSON.stringify(response));
                         }
                     } catch (error) {
-                        console.error(`[RPC Inject] Parse error:`, error.message);
+                        console.error(`[Extension Inject] Parse error:`, error.message);
                         res.writeHead(200); // Tetap 200 agar MetaMask tidak retry
                         res.end(JSON.stringify({
                             jsonrpc: '2.0',
@@ -130,10 +130,10 @@ class MetaMaskRpcServer {
 
             this.server.on('error', (err) => {
                 if (err.code === 'EADDRINUSE') {
-                    console.log(`[RPC Inject] ❌ Port ${this.port} sudah dipakai. Coba port lain.`);
+                    console.log(`[Extension Inject] ❌ Port ${this.port} sudah dipakai. Coba port lain.`);
                     resolve(false);
                 } else {
-                    console.log(`[RPC Inject] ❌ Error server:`, err.message);
+                    console.log(`[Extension Inject] ❌ Error server:`, err.message);
                     resolve(false);
                 }
             });
@@ -144,9 +144,9 @@ class MetaMaskRpcServer {
 
             this.server.listen(this.port, listenHost, () => {
                 this.isRunning = true;
-                console.log(`[RPC Inject] ✅ ${modeLabel} — Server berjalan di http://${displayHost}:${this.port}`);
+                console.log(`[Extension Inject] ✅ ${modeLabel} — Server berjalan di http://${displayHost}:${this.port}`);
                 if (this.vpsMode) {
-                    console.log(`[RPC Inject] ⚠️  Pastikan firewall VPS membuka port ${this.port}!`);
+                    console.log(`[Extension Inject] ⚠️  Pastikan firewall VPS membuka port ${this.port}!`);
                 }
                 resolve(true);
             });
@@ -157,7 +157,7 @@ class MetaMaskRpcServer {
         const { id, method, params } = rpcRequest;
         this.requestCount++;
 
-        // Reset inactivity timer untuk MetaMask RPC Inject DApp
+        // Reset inactivity timer untuk Extension Inject DApp
         if (requestOrigin) {
             this.cryptoApp.updateDappActivity(requestOrigin);
         }
@@ -166,10 +166,10 @@ class MetaMaskRpcServer {
         // Hanya log method yang benar-benar unexpected
         const suppressLogMethods = ['eth_call', 'eth_getBalance', 'eth_blockNumber', 'eth_getCode'];
         if (!suppressLogMethods.includes(method)) {
-            console.log(`[RPC Inject] 📥 Request #${this.requestCount}: ${method}`);
+            console.log(`[Extension Inject] 📥 Request #${this.requestCount}: ${method}`);
         } else {
             // Log singkat tanpa spam
-            process.stdout.write(`[RPC Inject] #${this.requestCount}:${method} `);
+            process.stdout.write(`[Extension Inject] #${this.requestCount}:${method} `);
         }
 
         // FIX: eth_chainId WAJIB dikembalikan dalam format hex string
@@ -177,14 +177,14 @@ class MetaMaskRpcServer {
         if (method === 'eth_chainId') {
             const chainId = this.cryptoApp.currentChainId;
             const hexChainId = '0x' + chainId.toString(16);
-            console.log(`[RPC Inject] ⛓️ eth_chainId → ${hexChainId} (${chainId})`);
+            console.log(`[Extension Inject] ⛓️ eth_chainId → ${hexChainId} (${chainId})`);
             return { jsonrpc: '2.0', id, result: hexChainId };
         }
 
         // FIX: net_version harus string desimal bukan hex
         if (method === 'net_version') {
             const chainId = this.cryptoApp.currentChainId;
-            console.log(`[RPC Inject] 🌐 net_version → ${chainId.toString()}`);
+            console.log(`[Extension Inject] 🌐 net_version → ${chainId.toString()}`);
             return { jsonrpc: '2.0', id, result: chainId.toString() };
         }
 
@@ -194,7 +194,7 @@ class MetaMaskRpcServer {
         if (method === 'eth_accounts' || method === 'eth_requestAccounts') {
             const address = this.cryptoApp.wallet?.address;
             if (!address) {
-                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi wallet belum aktif`);
+                console.log(`[Extension Inject] ⚠️ ${method} dipanggil tapi wallet belum aktif`);
                 return { jsonrpc: '2.0', id, result: [] };
             }
 
@@ -211,7 +211,7 @@ class MetaMaskRpcServer {
                             dappUrl: dappOrigin,
                             chainId: this.cryptoApp.currentChainId,
                             walletAddress: address,
-                            via: `RPC Inject Auto (Port ${this.port})`
+                            via: `Extension Inject Auto (Port ${this.port})`
                         };
                         this.cryptoApp.addConnectedDapp(dappDetails);
                         this.cryptoApp.sendDappConnectNotification(dappDetails);
@@ -219,7 +219,7 @@ class MetaMaskRpcServer {
                         return { jsonrpc: '2.0', id, result: [] };
                     }
                 }
-                console.log(`[RPC Inject] 👛 ${method} → ${address}`);
+                console.log(`[Extension Inject] 👛 ${method} → ${address}`);
                 return { jsonrpc: '2.0', id, result: [address.toLowerCase()] };
             }
 
@@ -230,17 +230,17 @@ class MetaMaskRpcServer {
                     dappUrl: dappOrigin,
                     chainId: this.cryptoApp.currentChainId,
                     walletAddress: address,
-                    via: `RPC Inject (Port ${this.port})`
+                    via: `Extension Inject (Port ${this.port})`
                 };
 
                 if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
-                    console.log(`[RPC Inject] 🔐 DApp Approval ON — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    console.log(`[Extension Inject] 🔐 DApp Approval ON — menunggu persetujuan user untuk: ${dappOrigin}`);
                     try {
                         await this.cryptoApp.requestDappApproval(dappDetails);
-                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        console.log(`[Extension Inject] ✅ DApp disetujui: ${dappOrigin}`);
                         this.cryptoApp.addConnectedDapp(dappDetails);
                     } catch (approvalError) {
-                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        console.log(`[Extension Inject] ❌ DApp ditolak: ${approvalError.message}`);
                         return {
                             jsonrpc: '2.0', id,
                             error: { code: 4001, message: 'User rejected the connection request' }
@@ -253,7 +253,7 @@ class MetaMaskRpcServer {
                 }
             }
 
-            console.log(`[RPC Inject] 👛 ${method} → ${address}`);
+            console.log(`[Extension Inject] 👛 ${method} → ${address}`);
             return { jsonrpc: '2.0', id, result: [address.toLowerCase()] };
         }
 
@@ -265,7 +265,7 @@ class MetaMaskRpcServer {
                 const result = await this.cryptoApp.provider.send('eth_estimateGas', params || []);
                 return { jsonrpc: '2.0', id, result };
             } catch (error) {
-                console.log(`[RPC Inject] ⚠️ eth_estimateGas failed: ${error.message}`);
+                console.log(`[Extension Inject] ⚠️ eth_estimateGas failed: ${error.message}`);
                 // Kembalikan -32000 (execution reverted) bukan -32603 (internal error)
                 // DApp akan tampilkan warning "may fail" tapi tetap bisa lanjut kirim tx
                 return {
@@ -282,7 +282,7 @@ class MetaMaskRpcServer {
                 const feeData = await this.cryptoApp.provider.getFeeData();
                 const priority = feeData.maxPriorityFeePerGas ?? feeData.gasPrice ?? 1000000000n;
                 const hexPriority = '0x' + priority.toString(16);
-                console.log(`[RPC Inject] 💸 eth_maxPriorityFeePerGas → ${hexPriority}`);
+                console.log(`[Extension Inject] 💸 eth_maxPriorityFeePerGas → ${hexPriority}`);
                 return { jsonrpc: '2.0', id, result: hexPriority };
             } catch (e) {
                 return { jsonrpc: '2.0', id, result: '0x3B9ACA00' }; // fallback 1 Gwei
@@ -313,7 +313,7 @@ class MetaMaskRpcServer {
                 if (address && params && params[0]?.toLowerCase() === address.toLowerCase()) {
                     const nonce = await this.cryptoApp.provider.getTransactionCount(address, params[1] || 'latest');
                     const hexNonce = '0x' + nonce.toString(16);
-                    console.log(`[RPC Inject] 🔢 eth_getTransactionCount → ${hexNonce}`);
+                    console.log(`[Extension Inject] 🔢 eth_getTransactionCount → ${hexNonce}`);
                     return { jsonrpc: '2.0', id, result: hexNonce };
                 }
             } catch (e) {}
@@ -329,7 +329,7 @@ class MetaMaskRpcServer {
             const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
             const reason = disconnectInfo.reason || 'unknown';
 
-            console.log(`[RPC Inject] 🔌 DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+            console.log(`[Extension Inject] 🔌 DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
 
             // Cari DApp di connectedDapps berdasarkan URL/origin
             if (this.cryptoApp.connectedDapps) {
@@ -342,7 +342,7 @@ class MetaMaskRpcServer {
                     this.cryptoApp.removeConnectedDapp(dapp.id);
                     this.cryptoApp.saveRpcConfig();
 
-                    console.log(`[RPC Inject] ✅ DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                    console.log(`[Extension Inject] ✅ DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
 
                     // Kirim notifikasi Telegram ke admin
                     if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
@@ -363,12 +363,12 @@ class MetaMaskRpcServer {
                             `🕒 Waktu  : ${new Date().toLocaleString('id-ID')}\n\n` +
                             `✅ DApp telah diputus dari bot secara otomatis.`,
                             { parse_mode: 'Markdown' }
-                        ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                        ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
                     }
 
                     return { jsonrpc: '2.0', id, result: { ok: true, dapp: dapp.name } };
                 } else {
-                    console.log(`[RPC Inject] ⚠️ DApp tidak ditemukan di list: ${dappOrigin}`);
+                    console.log(`[Extension Inject] ⚠️ DApp tidak ditemukan di list: ${dappOrigin}`);
                     return { jsonrpc: '2.0', id, result: { ok: false, reason: 'DApp tidak ada di connected list' } };
                 }
             }
@@ -385,7 +385,7 @@ class MetaMaskRpcServer {
         if (method === 'solana_accounts' || method === 'solana_requestAccounts') {
             const solAddress = await this.cryptoApp.getActiveSolanaAddress();
             if (!solAddress) {
-                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi Solana wallet tidak tersedia`);
+                console.log(`[Extension Inject] ⚠️ ${method} dipanggil tapi Solana wallet tidak tersedia`);
                 return { jsonrpc: '2.0', id, result: [] };
             }
 
@@ -398,17 +398,17 @@ class MetaMaskRpcServer {
                     dappUrl: dappOrigin,
                     chainId: 'solana',
                     walletAddress: solAddress,
-                    via: `RPC Inject Solana (Port ${this.port})`
+                    via: `Extension Inject Solana (Port ${this.port})`
                 };
 
                 if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
-                    console.log(`[RPC Inject] 🔐 DApp Approval ON (Solana) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    console.log(`[Extension Inject] 🔐 DApp Approval ON (Solana) — menunggu persetujuan user untuk: ${dappOrigin}`);
                     try {
                         await this.cryptoApp.requestDappApproval(dappDetails);
-                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        console.log(`[Extension Inject] ✅ DApp disetujui: ${dappOrigin}`);
                         this.cryptoApp.addConnectedDapp(dappDetails);
                     } catch (approvalError) {
-                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        console.log(`[Extension Inject] ❌ DApp ditolak: ${approvalError.message}`);
                         return {
                             jsonrpc: '2.0', id,
                             error: { code: 4001, message: 'User rejected the connection request' }
@@ -429,7 +429,7 @@ class MetaMaskRpcServer {
                             dappUrl: dappOrigin,
                             chainId: 'solana',
                             walletAddress: solAddress,
-                            via: `RPC Inject Solana Auto (Port ${this.port})`
+                            via: `Extension Inject Solana Auto (Port ${this.port})`
                         };
                         this.cryptoApp.addConnectedDapp(dappDetails);
                         this.cryptoApp.sendDappConnectNotification(dappDetails);
@@ -439,7 +439,7 @@ class MetaMaskRpcServer {
                 }
             }
 
-            console.log(`[RPC Inject] 🟣 ${method} → ${solAddress}`);
+            console.log(`[Extension Inject] 🟣 ${method} → ${solAddress}`);
             return { jsonrpc: '2.0', id, result: [solAddress] };
         }
 
@@ -453,7 +453,7 @@ class MetaMaskRpcServer {
                     const solAddress = (await this.cryptoApp.getActiveSolanaAddress()) || 'N/A';
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ *[RPC Inject] SOLANA TX SIGNED!*\n\n` +
+                        `✅ *[Extension Inject] SOLANA TX SIGNED!*\n\n` +
                         `💳 \`${solAddress}\`\n` +
                         `Method: \`solana_signTransaction\`\n` +
                         `⛓️ Chain: *Solana*\n` +
@@ -461,12 +461,12 @@ class MetaMaskRpcServer {
                         `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
                         `🕒 ${new Date().toLocaleString('id-ID')}`,
                         { parse_mode: 'Markdown' }
-                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                    ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
                 }
 
                 return { jsonrpc: '2.0', id, result };
             } catch (error) {
-                console.log(`[RPC Inject] ❌ solana_signTransaction error:`, error.message);
+                console.log(`[Extension Inject] ❌ solana_signTransaction error:`, error.message);
                 return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
             }
         }
@@ -480,19 +480,19 @@ class MetaMaskRpcServer {
                     const solAddress = (await this.cryptoApp.getActiveSolanaAddress()) || 'N/A';
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ *[RPC Inject] SOLANA MESSAGE SIGNED!*\n\n` +
+                        `✅ *[Extension Inject] SOLANA MESSAGE SIGNED!*\n\n` +
                         `💳 \`${solAddress}\`\n` +
                         `Method: \`solana_signMessage\`\n` +
                         `⛓️ Chain: *Solana*\n` +
                         `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
                         `🕒 ${new Date().toLocaleString('id-ID')}`,
                         { parse_mode: 'Markdown' }
-                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                    ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
                 }
 
                 return { jsonrpc: '2.0', id, result };
             } catch (error) {
-                console.log(`[RPC Inject] ❌ solana_signMessage error:`, error.message);
+                console.log(`[Extension Inject] ❌ solana_signMessage error:`, error.message);
                 return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
             }
         }
@@ -502,7 +502,7 @@ class MetaMaskRpcServer {
             const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
             const reason = disconnectInfo.reason || 'unknown';
 
-            console.log(`[RPC Inject] 🔌 Solana DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+            console.log(`[Extension Inject] 🔌 Solana DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
 
             if (this.cryptoApp.connectedDapps) {
                 const dapp = this.cryptoApp.connectedDapps.find(
@@ -512,7 +512,7 @@ class MetaMaskRpcServer {
                 if (dapp) {
                     this.cryptoApp.removeConnectedDapp(dapp.id);
                     this.cryptoApp.saveRpcConfig();
-                    console.log(`[RPC Inject] ✅ Solana DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                    console.log(`[Extension Inject] ✅ Solana DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
                 }
             }
 
@@ -531,7 +531,7 @@ class MetaMaskRpcServer {
                     `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
                     `✅ DApp telah diputus dari bot secara otomatis.`,
                     { parse_mode: 'Markdown' }
-                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
             }
 
             return { jsonrpc: '2.0', id, result: { ok: true } };
@@ -546,7 +546,7 @@ class MetaMaskRpcServer {
         if (method === 'aptos_accounts' || method === 'aptos_requestAccounts') {
             const aptosDetails = await this.cryptoApp.getActiveAptosAccountDetails();
             if (!aptosDetails) {
-                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi Aptos wallet tidak tersedia`);
+                console.log(`[Extension Inject] ⚠️ ${method} dipanggil tapi Aptos wallet tidak tersedia`);
                 return { jsonrpc: '2.0', id, result: null };
             }
 
@@ -561,17 +561,17 @@ class MetaMaskRpcServer {
                     dappUrl: dappOrigin,
                     chainId: 'aptos',
                     walletAddress: aptosAddress,
-                    via: `RPC Inject Aptos (Port ${this.port})`
+                    via: `Extension Inject Aptos (Port ${this.port})`
                 };
 
                 if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
-                    console.log(`[RPC Inject] 🔐 DApp Approval ON (Aptos) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                    console.log(`[Extension Inject] 🔐 DApp Approval ON (Aptos) — menunggu persetujuan user untuk: ${dappOrigin}`);
                     try {
                         await this.cryptoApp.requestDappApproval(dappDetails);
-                        console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                        console.log(`[Extension Inject] ✅ DApp disetujui: ${dappOrigin}`);
                         this.cryptoApp.addConnectedDapp(dappDetails);
                     } catch (approvalError) {
-                        console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                        console.log(`[Extension Inject] ❌ DApp ditolak: ${approvalError.message}`);
                         return {
                             jsonrpc: '2.0', id,
                             error: { code: 4001, message: 'User rejected the connection request' }
@@ -589,7 +589,7 @@ class MetaMaskRpcServer {
                             dappUrl: dappOrigin,
                             chainId: 'aptos',
                             walletAddress: aptosAddress,
-                            via: `RPC Inject Aptos Auto (Port ${this.port})`
+                            via: `Extension Inject Aptos Auto (Port ${this.port})`
                         };
                         this.cryptoApp.addConnectedDapp(dappDetails);
                         this.cryptoApp.sendDappConnectNotification(dappDetails);
@@ -599,7 +599,7 @@ class MetaMaskRpcServer {
                 }
             }
 
-            console.log(`[RPC Inject] 🟢 ${method} → ${aptosAddress}`);
+            console.log(`[Extension Inject] 🟢 ${method} → ${aptosAddress}`);
             return { jsonrpc: '2.0', id, result: { address: aptosAddress, publicKey: aptosPublicKey } };
         }
 
@@ -614,7 +614,7 @@ class MetaMaskRpcServer {
                     const aptosAddress = (await this.cryptoApp.getActiveAptosAddress()) || 'N/A';
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ *[RPC Inject] APTOS TX SIGNED!*\n\n` +
+                        `✅ *[Extension Inject] APTOS TX SIGNED!*\n\n` +
                         `💳 \`${aptosAddress}\`\n` +
                         `Method: \`aptos_signTransaction\`\n` +
                         `⛓️ Chain: *Aptos*\n` +
@@ -622,12 +622,12 @@ class MetaMaskRpcServer {
                         `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
                         `🕒 ${new Date().toLocaleString('id-ID')}`,
                         { parse_mode: 'Markdown' }
-                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                    ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
                 }
 
                 return { jsonrpc: '2.0', id, result };
             } catch (error) {
-                console.log(`[RPC Inject] ❌ aptos_signTransaction error:`, error.message);
+                console.log(`[Extension Inject] ❌ aptos_signTransaction error:`, error.message);
                 return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
             }
         }
@@ -641,19 +641,19 @@ class MetaMaskRpcServer {
                     const aptosAddress = (await this.cryptoApp.getActiveAptosAddress()) || 'N/A';
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ *[RPC Inject] APTOS MESSAGE SIGNED!*\n\n` +
+                        `✅ *[Extension Inject] APTOS MESSAGE SIGNED!*\n\n` +
                         `💳 \`${aptosAddress}\`\n` +
                         `Method: \`aptos_signMessage\`\n` +
                         `⛓️ Chain: *Aptos*\n` +
                         `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
                         `🕒 ${new Date().toLocaleString('id-ID')}`,
                         { parse_mode: 'Markdown' }
-                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                    ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
                 }
 
                 return { jsonrpc: '2.0', id, result };
             } catch (error) {
-                console.log(`[RPC Inject] ❌ aptos_signMessage error:`, error.message);
+                console.log(`[Extension Inject] ❌ aptos_signMessage error:`, error.message);
                 return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
             }
         }
@@ -663,7 +663,7 @@ class MetaMaskRpcServer {
             const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
             const reason = disconnectInfo.reason || 'unknown';
 
-            console.log(`[RPC Inject] 🔌 Aptos DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+            console.log(`[Extension Inject] 🔌 Aptos DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
 
             if (this.cryptoApp.connectedDapps) {
                 const dapp = this.cryptoApp.connectedDapps.find(
@@ -673,7 +673,7 @@ class MetaMaskRpcServer {
                 if (dapp) {
                     this.cryptoApp.removeConnectedDapp(dapp.id);
                     this.cryptoApp.saveRpcConfig();
-                    console.log(`[RPC Inject] ✅ Aptos DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                    console.log(`[Extension Inject] ✅ Aptos DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
                 }
             }
 
@@ -692,7 +692,7 @@ class MetaMaskRpcServer {
                     `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
                     `✅ DApp telah diputus dari bot secara otomatis.`,
                     { parse_mode: 'Markdown' }
-                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
             }
 
             return { jsonrpc: '2.0', id, result: { ok: true } };
@@ -705,7 +705,7 @@ class MetaMaskRpcServer {
         if (method === 'ton_connect') {
             const tonDetails = await this.cryptoApp.getActiveTonAccountDetails();
             if (!tonDetails) {
-                console.log(`[RPC Inject] ⚠️ ${method} dipanggil tapi TON wallet tidak tersedia`);
+                console.log(`[Extension Inject] ⚠️ ${method} dipanggil tapi TON wallet tidak tersedia`);
                 return { jsonrpc: '2.0', id, result: null };
             }
 
@@ -718,7 +718,7 @@ class MetaMaskRpcServer {
                 dappUrl: dappOrigin,
                 chainId: 'ton',
                 walletAddress: tonDetails.userFriendlyAddress,
-                via: `RPC Inject TON (Port ${this.port})`
+                via: `Extension Inject TON (Port ${this.port})`
             };
 
             const paramsObj = params?.[0] || {};
@@ -726,16 +726,16 @@ class MetaMaskRpcServer {
 
             if (this.cryptoApp.isDappConnectionApprovalRequired() && !isConnected) {
                 if (!isInteractive) {
-                    console.log(`[RPC Inject] 🤫 Silent ton_connect restore rejected for: ${dappOrigin}`);
+                    console.log(`[Extension Inject] 🤫 Silent ton_connect restore rejected for: ${dappOrigin}`);
                     return { jsonrpc: '2.0', id, result: null };
                 }
-                console.log(`[RPC Inject] 🔐 DApp Approval ON (TON) — menunggu persetujuan user untuk: ${dappOrigin}`);
+                console.log(`[Extension Inject] 🔐 DApp Approval ON (TON) — menunggu persetujuan user untuk: ${dappOrigin}`);
                 try {
                     await this.cryptoApp.requestDappApproval(dappDetails);
-                    console.log(`[RPC Inject] ✅ DApp disetujui: ${dappOrigin}`);
+                    console.log(`[Extension Inject] ✅ DApp disetujui: ${dappOrigin}`);
                     this.cryptoApp.addConnectedDapp(dappDetails);
                 } catch (approvalError) {
-                    console.log(`[RPC Inject] ❌ DApp ditolak: ${approvalError.message}`);
+                    console.log(`[Extension Inject] ❌ DApp ditolak: ${approvalError.message}`);
                     return {
                         jsonrpc: '2.0', id,
                         error: { code: 4001, message: 'User rejected the connection request' }
@@ -746,7 +746,7 @@ class MetaMaskRpcServer {
                 this.cryptoApp.sendDappConnectNotification(dappDetails);
             }
 
-            console.log(`[RPC Inject] 🟢 ${method} → ${tonAddress}`);
+            console.log(`[Extension Inject] 🟢 ${method} → ${tonAddress}`);
             return { jsonrpc: '2.0', id, result: tonDetails };
         }
 
@@ -760,19 +760,19 @@ class MetaMaskRpcServer {
                     const tonAddress = (await this.cryptoApp.getActiveTonAddress()) || 'N/A';
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ *[RPC Inject] TON TRANSACTION SENT!*\n\n` +
+                        `✅ *[Extension Inject] TON TRANSACTION SENT!*\n\n` +
                         `💳 \`${tonAddress}\`\n` +
                         `Method: \`ton_send\` (\`${appRequest.method}\`)\n` +
                         `⛓️ Chain: *TON*\n` +
                         `👤 DApp: \`${requestOrigin || 'Unknown'}\`\n` +
                         `🕒 ${new Date().toLocaleString('id-ID')}`,
                         { parse_mode: 'Markdown' }
-                    ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                    ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
                 }
 
                 return { jsonrpc: '2.0', id, result };
             } catch (error) {
-                console.log(`[RPC Inject] ❌ ton_send error:`, error.message);
+                console.log(`[Extension Inject] ❌ ton_send error:`, error.message);
                 return { jsonrpc: '2.0', id, error: { code: -32000, message: error.message } };
             }
         }
@@ -782,7 +782,7 @@ class MetaMaskRpcServer {
             const dappOrigin = disconnectInfo.origin || requestOrigin || 'Unknown';
             const reason = disconnectInfo.reason || 'unknown';
 
-            console.log(`[RPC Inject] 🔌 TON DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
+            console.log(`[Extension Inject] 🔌 TON DApp disconnect diterima: ${dappOrigin} (reason: ${reason})`);
 
             if (this.cryptoApp.connectedDapps) {
                 const dapp = this.cryptoApp.connectedDapps.find(
@@ -792,7 +792,7 @@ class MetaMaskRpcServer {
                 if (dapp) {
                     this.cryptoApp.removeConnectedDapp(dapp.id);
                     this.cryptoApp.saveRpcConfig();
-                    console.log(`[RPC Inject] ✅ TON DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
+                    console.log(`[Extension Inject] ✅ TON DApp dihapus dari connected list: ${dapp.name || dappOrigin}`);
                 }
             }
 
@@ -811,7 +811,7 @@ class MetaMaskRpcServer {
                     `🕒 ${new Date().toLocaleString('id-ID')}\n\n` +
                     `✅ DApp telah diputus dari bot secara otomatis.`,
                     { parse_mode: 'Markdown' }
-                ).catch(e => console.warn('[RPC Inject] Telegram notify error:', e.message));
+                ).catch(e => console.warn('[Extension Inject] Telegram notify error:', e.message));
             }
 
             return { jsonrpc: '2.0', id, result: { ok: true } };
@@ -834,10 +834,10 @@ class MetaMaskRpcServer {
             };
         }
 
-        console.log(`[RPC Inject] 🔔 INTERCEPT: ${method}`);
+        console.log(`[Extension Inject] 🔔 INTERCEPT: ${method}`);
 
         // Terapkan delay yang diset user (sama seperti WalletConnect)
-        await this.cryptoApp.delayExecution(`RPC Inject (${method})`);
+        await this.cryptoApp.delayExecution(`Extension Inject (${method})`);
 
         try {
             let result;
@@ -881,7 +881,7 @@ class MetaMaskRpcServer {
             // Kirim notifikasi Telegram
             if (method.startsWith('eth_') || method === 'personal_sign') {
                 const txCount = await this.cryptoApp.getTransactionCount(this.cryptoApp.wallet.address);
-                console.log(`[RPC Inject] Total transaksi: ${txCount}`);
+                console.log(`[Extension Inject] Total transaksi: ${txCount}`);
 
                 if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
                     let txHashText = '';
@@ -896,7 +896,7 @@ class MetaMaskRpcServer {
 
                     this.cryptoApp.bot.sendMessage(
                         this.cryptoApp.sessionNotificationChatId,
-                        `✅ *[RPC Inject] TRANSAKSI DI-APPROVE!*\n` +
+                        `✅ *[Extension Inject] TRANSAKSI DI-APPROVE!*\n` +
                         `📊 Total Transaksi: ${txCount}\n\n` +
                         `💳 \`${this.cryptoApp.wallet.address}\`\n` +
                         `Method: \`${method}\`\n` +
@@ -906,26 +906,26 @@ class MetaMaskRpcServer {
                         `⏱️ Delay Used: ${this.cryptoApp.executionDelay}s\n` +
                         `🕒 ${new Date().toLocaleString()}`,
                         { parse_mode: 'Markdown' }
-                    ).catch(err => console.warn(`[RPC Inject] Telegram notify error: ${err.message}`));
+                    ).catch(err => console.warn(`[Extension Inject] Telegram notify error: ${err.message}`));
                 }
             }
 
             return { jsonrpc: '2.0', id, result: result ?? null };
 
         } catch (error) {
-            console.log(`[RPC Inject] ❌ Error intercept ${method}:`, error.message);
+            console.log(`[Extension Inject] ❌ Error intercept ${method}:`, error.message);
 
             if (this.cryptoApp.bot && this.cryptoApp.sessionNotificationChatId) {
                 this.cryptoApp.bot.sendMessage(
                     this.cryptoApp.sessionNotificationChatId,
-                    `❌ [RPC Inject] TRANSAKSI GAGAL!\n\n` +
+                    `❌ [Extension Inject] TRANSAKSI GAGAL!\n\n` +
                     `💳 ${this.cryptoApp.wallet.address}\n` +
                     `Method: ${method}\n` +
                     `Error: ${error.message}\n` +
                     `⛓️ Chain: ${this.cryptoApp.currentChainId}\n` +
                     `🌐 RPC: ${this.cryptoApp.currentRpcName}\n` +
                     `🕒 ${new Date().toLocaleString()}`
-                ).catch(err => console.warn(`[RPC Inject] Telegram notify error: ${err.message}`));
+                ).catch(err => console.warn(`[Extension Inject] Telegram notify error: ${err.message}`));
             }
 
             return {
@@ -947,13 +947,13 @@ class MetaMaskRpcServer {
             // tersebut dan langsung lanjut ke request berikutnya (eth_sendTransaction).
             if (method === 'eth_call') {
                 const revertData = error.data ?? error.transaction?.data ?? '0x';
-                console.log(`[RPC Inject] ↩️ eth_call revert (normal) → kembalikan sebagai execution error`);
+                console.log(`[Extension Inject] ↩️ eth_call revert (normal) → kembalikan sebagai execution error`);
                 return {
                     jsonrpc: '2.0', id,
                     error: { code: -32000, message: 'execution reverted', data: revertData }
                 };
             }
-            console.log(`[RPC Inject] ⚠️ Forward error (${method}):`, error.message);
+            console.log(`[Extension Inject] ⚠️ Forward error (${method}):`, error.message);
             return {
                 jsonrpc: '2.0', id,
                 error: { code: -32603, message: error.message }
@@ -965,7 +965,7 @@ class MetaMaskRpcServer {
         if (this.server && this.isRunning) {
             this.server.close();
             this.isRunning = false;
-            console.log(`[RPC Inject] 🛑 Server port ${this.port} dihentikan`);
+            console.log(`[Extension Inject] 🛑 Server port ${this.port} dihentikan`);
         }
     }
 

@@ -18,7 +18,7 @@ const WORD_MAP = {
 
     // Main Keyboard Menu (physical reply keyboard)
     "💼 Wallet Management": "💼 Wallet Management",
-    "🦊 RPC Inject": "🦊 RPC Inject",
+    "🦊 Extension Inject": "🦊 Extension Inject",
     "🔗 WalletConnect": "🔗 WalletConnect",
     "🌐 RPC Management": "🌐 RPC Management",
     "📂 Menu Lainnya": "📂 More Menus",
@@ -28,7 +28,7 @@ const WORD_MAP = {
     "💼 WALLET MANAGEMENT:": "💼 WALLET MANAGEMENT:",
     "🌐 RPC MANAGEMENT:": "🌐 RPC MANAGEMENT:",
     "🔗 WALLETCONNECT": "🔗 WALLETCONNECT",
-    "🦊 *METAMASK RPC INJECT — PORT MANAGER*": "🦊 *METAMASK RPC INJECT — PORT MANAGER*",
+    "🦊 *EXTENSION INJECT — PORT MANAGER*": "🦊 *EXTENSION INJECT — PORT MANAGER*",
     "⚙️ *PENGATURAN*": "⚙️ *SETTINGS*",
     "📂 *MENU LAINNYA*": "📂 *MORE MENUS*",
     "💸 *TRANSFER BOT*": "💸 *TRANSFER BOT*",
@@ -118,6 +118,15 @@ const WORD_MAP = {
     "🌐 → VPS": "🌐 → VPS",
     "➕ Tambah Port Custom": "➕ Add Custom Port",
     "🗑️ Hapus Port Custom": "🗑️ Delete Custom Port",
+    "📦 Download Extension": "📦 Download Extension",
+    "📦 *DOWNLOAD BROWSER EXTENSION*\n\nSilakan pilih ekstensi yang ingin Anda unduh:": "📦 *DOWNLOAD BROWSER EXTENSION*\n\nPlease select the extension you want to download:",
+    "🦊 MetaMask / Chrome Extension": "🦊 MetaMask / Chrome Extension",
+    "💳 Bitget Extension": "💳 Bitget Extension",
+    "🦊 Firefox Extension": "🦊 Firefox Extension",
+    "⏳ Sedang mengompres ekstensi, harap tunggu...": "⏳ Compressing extension, please wait...",
+    "❌ Gagal mengompres ekstensi:": "❌ Failed to compress extension:",
+    "❌ File ekstensi tidak ditemukan.": "❌ Extension file not found.",
+    "✅ Ekstensi berhasil dikirim!": "✅ Extension successfully sent!",
     "AKTIF — port": "ACTIVE — port",
 
     // Settings (Pengaturan)

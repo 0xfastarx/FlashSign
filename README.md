@@ -11,7 +11,7 @@
 
 # 🚀 FA STARX BOT `v20.0.0`
 
-**Multi-Chain Auto-Transaction Bot** dengan WalletConnect, MetaMask RPC Inject, dan kendali penuh via Telegram
+**Multi-Chain Auto-Transaction Bot** untuk EVM, Solana, Aptos, Sui, TON, dan NEAR dengan WalletConnect, Extension Inject, serta kendali penuh via Telegram
 
 [![Node.js](https://img.shields.io/badge/Node.js-≥18.0-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
 [![Ethers.js](https://img.shields.io/badge/Ethers.js-v6.x-764ABC?style=for-the-badge&logo=ethereum&logoColor=white)](https://ethers.org)
@@ -43,8 +43,9 @@
 
 | Fitur | Deskripsi |
 |-------|-----------|
+| **Multi-Chain Support** | Dukungan penuh jaringan EVM (Ethereum, BSC, Polygon, dll.) & Non-EVM (Solana, Aptos, Sui, TON, NEAR) |
 | **WalletConnect v2** | Auto-approve transaksi dari DApp via protokol WalletConnect |
-| **MetaMask RPC Inject** | Server RPC kustom yang menjadi perantara transaksi dari MetaMask/browser |
+| **Extension Inject** | Server kustom yang menjadi perantara transaksi dari browser extension |
 | **Multi-Port RPC** | Jalankan beberapa server RPC di port berbeda secara bersamaan |
 | **VPS / Localhost Mode** | Mode server fleksibel: lokal (`127.0.0.1`) atau VPS publik (`0.0.0.0`) |
 | **Auto-Save DApp RPC** | URL RPC dari DApp otomatis disimpan ke konfigurasi |
@@ -60,14 +61,14 @@
 | **Backup Phrase Viewer** | Lihat kembali Mnemonic / Private Key dari wallet yang tersimpan |
 | **Multi-Wallet** | Kelola dan simpan banyak wallet sekaligus, ganti aktif kapan saja |
 | **Hapus Wallet** | Hapus wallet dari penyimpanan terenkripsi dengan konfirmasi |
-| **Cek Balance** | Pantau saldo ETH wallet aktif secara real-time |
+| **Cek Balance** | Pantau saldo koin native (ETH, SOL, APT, SUI, TON, NEAR) secara real-time |
 | **Statistik Transaksi** | Lihat total transaksi dan riwayat dari blockchain |
 
 ### 🌐 Manajemen RPC & Gas
 
 | Fitur | Deskripsi |
 |-------|-----------|
-| **Multi-RPC Manager** | Simpan, pilih, dan hapus konfigurasi RPC dengan mudah |
+| **Multi-RPC Manager** | Simpan, pilih, dan hapus konfigurasi RPC (EVM, Solana, Aptos, Sui, TON, NEAR) dengan mudah |
 | **Gas Mode: Auto** | Gas price otomatis dari estimasi jaringan |
 | **Gas Mode: Manual** | Paksa nilai Gas (Gwei) tertentu untuk setiap transaksi |
 | **Gas Mode: Aggressive** | Boost gas price dengan persentase tertentu untuk prioritas tinggi |
@@ -162,7 +163,13 @@ node main.js
 
 | Package | Versi | Fungsi |
 |---------|-------|--------|
-| `ethers` | ^6.16.0 | Interaksi blockchain Ethereum |
+| `ethers` | ^6.16.0 | Interaksi blockchain Ethereum / EVM |
+| `@solana/web3.js` | ^1.98.4 | Interaksi blockchain Solana |
+| `@aptos-labs/ts-sdk` | ^7.2.0 | Interaksi blockchain Aptos |
+| `@mysten/sui` | ^2.20.1 | Interaksi blockchain Sui |
+| `@ton/ton` | ^16.3.0 | Interaksi blockchain TON |
+| `@ton/crypto` | ^3.3.0 | Cryptography helper untuk TON |
+| `near-api-js` | ^7.2.0 | Interaksi blockchain NEAR |
 | `@walletconnect/sign-client` | ^2.23.8 | Protokol WalletConnect v2 |
 | `node-telegram-bot-api` | ^0.64.0 | Telegram Bot API |
 | `dotenv` | ^16.0.0 | Load konfigurasi .env |
@@ -248,7 +255,7 @@ Bot akan otomatis mendeteksi mode:
 💼 Wallet Management    →  Kelola wallet (import, generate, backup, hapus)
 🌐 RPC Management       →  Kelola konfigurasi RPC & gas
 🔗 WalletConnect        →  Connect ke DApp via WalletConnect
-🦊 RPC Inject           →  Kelola server MetaMask RPC Inject
+🦊 Extension Inject     →  Kelola server Extension Inject
 📂 Menu Lainnya         →  Transfer Bot, Morse Cipher, Tracking Bot (Mainnet), dll
 ⚙️ Pengaturan           →  DApp Approval, ganti password, dll
 ```
@@ -261,10 +268,10 @@ Bot akan otomatis mendeteksi mode:
 | `/menu` | Tampilkan menu utama |
 | `/status` | Status bot & koneksi saat ini |
 
-### Alur MetaMask RPC Inject
+### Alur Extension Inject
 
 ```
-1. Buka menu 🦊 RPC Inject di Telegram
+1. Buka menu 🦊 Extension Inject di Telegram
 2. Pilih port → Start Server
 3. Salin URL RPC: http://127.0.0.1:<port>
 4. Buka MetaMask → Settings → Networks → Add Network
@@ -370,7 +377,7 @@ Support  : Chrome, Brave, Edge (Chromium)
 ```
 Versi    : 1.0.0
 Support  : Chrome, Brave, Edge (Chromium)
-Deskripsi: Ekstensi khusus yang menyamar sebagai Bitget Wallet untuk menyalurkan request DApp secara aman ke server RPC Inject lokal.
+Deskripsi: Ekstensi khusus yang menyamar sebagai Bitget Wallet untuk menyalurkan request DApp secara aman ke server Extension Inject lokal.
 ```
 
 ### Firefox Extension
@@ -425,7 +432,7 @@ Untuk mencegah AI atau pihak tidak berwenang memodifikasi basis kode bot secara 
 - ✅ Aktifkan **DApp Approval Mode** untuk mencegah koneksi tidak dikenal
 - ✅ Backup file `.data/` secara berkala
 - ❌ Jangan pernah membagikan file `.env`, folder `.data/`, atau berkas marker keamanan bertitik (`.*`)
-- ❌ Jangan expose port RPC Inject ke internet tanpa firewall
+- ❌ Jangan expose port Extension Inject ke internet tanpa firewall
 
 ---
 
@@ -437,7 +444,7 @@ Data per-sesi disimpan di folder tersembunyi `.data/` dengan format:
 .data/
 ├── <session_id>_wallets.enc        ← Wallet terenkripsi (AES-256-GCM)
 ├── <session_id>_rpc-config.json    ← Konfigurasi RPC & DApp
-├── <session_id>_rpc-ports.json     ← Konfigurasi port RPC Inject
+├── <session_id>_rpc-ports.json     ← Konfigurasi port Extension Inject
 ├── <session_id>_master.key         ← Kunci enkripsi session (RAHASIA!)
 ├── <chat_id>_tracked_wallets.json  ← Daftar wallet pemantauan tracker
 ├── <chat_id>_tracker_state.json     ← Status aktif & cursor filter tracker

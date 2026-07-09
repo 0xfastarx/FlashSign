@@ -1,7 +1,7 @@
 {
   "name": "fa-starx-bot",
   "version": "20.0.0",
-  "description": "FA STARX BOT - Multi-Chain Transfer Bot with WalletConnect & MetaMask RPC Inject",
+  "description": "FA STARX BOT - Multi-Chain Transfer Bot with WalletConnect & Extension Inject",
   "main": "main.js",
   "bin": "control.js",
   "scripts": {

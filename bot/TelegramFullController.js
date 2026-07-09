@@ -2392,7 +2392,7 @@ class TelegramFullController {
 
         const keyboardRows = [
             ['💼 Wallet Management'],
-            ['🦊 RPC Inject', '🔗 WalletConnect'],
+            ['🦊 Extension Inject', '🔗 WalletConnect'],
             ['🌐 RPC Management', '📂 Menu Lainnya'],
             ['⚙️ Pengaturan'],
         ];
@@ -6747,11 +6747,12 @@ class TelegramFullController {
         const extraButtons = [
             [{ text: '➕ Tambah Port Custom', callback_data: 'rpc_inject_addport' }],
             [{ text: '🗑️ Hapus Port Custom', callback_data: 'rpc_inject_deleteport' }],
+            [{ text: '📦 Download Extension', callback_data: 'rpc_inject_downloadext' }],
             [{ text: '🔙 Main Menu', callback_data: 'main_menu' }]
         ];
 
         this.bot.sendMessage(chatId,
-            `🦊 *METAMASK RPC INJECT — PORT MANAGER*\n\n` +
+            `🦊 *EXTENSION INJECT — PORT MANAGER*\n\n` +
             `Status: ${statusText}\n\n` +
             `*Daftar Port:*\n${portLines}\n\n` +
             `💡 Tiap port bisa diset Localhost atau VPS mode secara independen.`,
@@ -6915,7 +6916,7 @@ class TelegramFullController {
             this.showRpcMenu(cryptoApp, chatId);
         } else if (text === '🔗 WalletConnect') {
             this.showWalletConnectMenu(cryptoApp, chatId);
-        } else if (text === '🦊 RPC Inject') {
+        } else if (text === '🦊 Extension Inject') {
             await this.showRpcInjectMenu(cryptoApp, chatId);
         } else if (text === '📂 Menu Lainnya') {
             this.showMenuLainnya(chatId);
@@ -8867,7 +8868,7 @@ class TelegramFullController {
                 const info = cryptoApp.getRpcServerInfo(port);
                 if (info) {
                     this.bot.sendMessage(chatId,
-                        `🦊 *RPC INJECT INFO — PORT ${port}*\n\n` +
+                        `🦊 *EXTENSION INJECT INFO — PORT ${port}*\n\n` +
                         `🔌 Mode    : ${info.modeLabel}\n` +
                         `🔗 RPC URL : \`${info.rpcUrl}\`\n` +
                         (info.vpsMode ? `⚠️ Ganti \`<IP_VPS>\` dengan IP publik VPS kamu!\n` : '') +
