@@ -423,7 +423,10 @@ async function runSetupFlow(envPath, envContent, approvedHash, mode, existing2FA
     const oldTelegramToken   = getOldVal('TELEGRAM_BOT_TOKEN_ENCRYPTED') || HARDCODED.telegramToken;
     const oldControllerToken = getOldVal('CONTROLLER_BOT_TOKEN_ENCRYPTED') || HARDCODED.controllerToken;
     const oldAdminChatId     = getOldVal('ADMIN_CHAT_ID_ENCRYPTED') || HARDCODED.adminChatId;
-    const walletConnectId    = getOldVal('WALLETCONNECT_PROJECT_ID_ENCRYPTED') || HARDCODED.walletConnectId;
+    let walletConnectId      = getOldVal('WALLETCONNECT_PROJECT_ID_ENCRYPTED');
+    if (!walletConnectId || !/^[a-fA-F0-9]{32}$/.test(walletConnectId)) {
+        walletConnectId = HARDCODED.walletConnectId;
+    }
 
     console.log(PURPLE + '┌──────────────────────────────────────────────────────┐');
     console.log('│  INPUT KONFIGURASI (Enter = pertahankan nilai lama)  │');
