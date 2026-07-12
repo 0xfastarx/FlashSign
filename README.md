@@ -11,7 +11,7 @@
 
 # 🚀 FA STARX BOT `v20.0.0`
 
-**Multi-Chain Auto-Transaction Bot** untuk EVM, Solana, Aptos, Sui, TON, dan NEAR dengan WalletConnect, Extension Inject, serta kendali penuh via Telegram
+**Multi-Chain Auto-Transaction Bot** for EVM, Solana, Aptos, Sui, TON, and NEAR with WalletConnect, Extension Inject, and full control via Telegram.
 
 [![Node.js](https://img.shields.io/badge/Node.js-≥18.0-339933?style=for-the-badge&logo=node.js&logoColor=white)](https://nodejs.org)
 [![Ethers.js](https://img.shields.io/badge/Ethers.js-v6.x-764ABC?style=for-the-badge&logo=ethereum&logoColor=white)](https://ethers.org)
@@ -23,404 +23,404 @@
 
 ---
 
-## 📋 Daftar Isi
+## 📋 Table of Contents
 
-- [✨ Fitur Utama](#-fitur-utama)
-- [📦 Instalasi](#-instalasi)
-- [⚙️ Konfigurasi & Lisensi](#️-konfigurasi--lisensi)
-- [▶️ Menjalankan Bot](#️-menjalankan-bot)
-- [📱 Panduan Penggunaan Telegram](#-panduan-penggunaan-telegram)
-- [🎛️ Manajemen & Lisensi (Sisi Admin)](#️-manajemen--lisensi-sisi-admin)
+- [✨ Key Features](#-key-features)
+- [📦 Installation](#-installation)
+- [⚙️ Configuration & Licensing](#️-configuration--licensing)
+- [▶️ Running the Bot](#️-running-the-bot)
+- [📱 Telegram Usage Guide](#-telegram-usage-guide)
+- [🎛️ Management & Licensing (Admin Side)](#️-management--licensing-admin-side)
 - [🦊 Browser Extension](#-browser-extension)
-- [🔒 Keamanan](#-keamanan)
-- [📁 Struktur Direktori](#-struktur-direktori)
+- [🔒 Security](#-security)
+- [📁 Directory Structure](#-directory-structure)
 
 ---
 
-## ✨ Fitur Utama
+## ✨ Key Features
 
-### 🔗 Koneksi & Transaksi
+### 🔗 Connection & Transactions
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Multi-Chain Support** | Dukungan penuh jaringan EVM (Ethereum, BSC, Polygon, dll.) & Non-EVM (Solana, Aptos, Sui, TON, NEAR) |
-| **WalletConnect v2** | Auto-approve transaksi dari DApp via protokol WalletConnect |
-| **Extension Inject** | Server kustom yang menjadi perantara transaksi dari browser extension |
-| **Multi-Port RPC** | Jalankan beberapa server RPC di port berbeda secara bersamaan |
-| **VPS / Localhost Mode** | Mode server fleksibel: lokal (`127.0.0.1`) atau VPS publik (`0.0.0.0`) |
-| **Auto-Save DApp RPC** | URL RPC dari DApp otomatis disimpan ke konfigurasi |
-| **Smart Delay Execution** | Tunda eksekusi transaksi dengan jeda waktu yang dapat diatur |
+| **Multi-Chain Support** | Full support for EVM chains (Ethereum, BSC, Polygon, etc.) & Non-EVM chains (Solana, Aptos, Sui, TON, NEAR) |
+| **WalletConnect v2** | Auto-approve transactions from DApps via WalletConnect protocol |
+| **Extension Inject** | Custom server acting as a transaction bridge from browser extensions |
+| **Multi-Port RPC** | Run multiple RPC servers on different ports simultaneously |
+| **VPS / Localhost Mode** | Flexible server modes: local (`127.0.0.1`) or public VPS (`0.0.0.0`) |
+| **Auto-Save DApp RPC** | Auto-save RPC URLs from DApps to configuration |
+| **Smart Delay Execution** | Delay transaction execution with adjustable delay times |
 
-### 💼 Manajemen Wallet
+### 💼 Wallet Management
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Import Private Key** | Import wallet menggunakan private key secara langsung |
-| **Import via Mnemonic** | Import wallet dari 12/24 kata Seed Phrase dengan derivation path kustom |
-| **Generate Wallet Otomatis** | Buat wallet baru secara acak, lengkap dengan Mnemonic Phrase |
-| **Backup Phrase Viewer** | Lihat kembali Mnemonic / Private Key dari wallet yang tersimpan |
-| **Multi-Wallet** | Kelola dan simpan banyak wallet sekaligus, ganti aktif kapan saja |
-| **Hapus Wallet** | Hapus wallet dari penyimpanan terenkripsi dengan konfirmasi |
-| **Cek Balance** | Pantau saldo koin native (ETH, SOL, APT, SUI, TON, NEAR) secara real-time |
-| **Statistik Transaksi** | Lihat total transaksi dan riwayat dari blockchain |
+| **Import Private Key** | Directly import wallets using private keys |
+| **Import via Mnemonic** | Import wallets from 12/24-word Seed Phrases with custom derivation paths |
+| **Auto-Generate Wallet** | Randomly generate new wallets, complete with Mnemonic Phrases |
+| **Backup Phrase Viewer** | View Mnemonics / Private Keys of stored wallets |
+| **Multi-Wallet** | Manage and store multiple wallets simultaneously; switch the active one at any time |
+| **Delete Wallet** | Delete wallets from encrypted storage with confirmation |
+| **Balance Checker** | Monitor native coin balances (ETH, SOL, APT, SUI, TON, NEAR) in real-time |
+| **Transaction Statistics** | View total transactions and history from the blockchain |
 
-### 🌐 Manajemen RPC & Gas
+### 🌐 RPC & Gas Management
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Multi-RPC Manager** | Simpan, pilih, dan hapus konfigurasi RPC (EVM, Solana, Aptos, Sui, TON, NEAR) dengan mudah |
-| **Gas Mode: Auto** | Gas price otomatis dari estimasi jaringan |
-| **Gas Mode: Manual** | Paksa nilai Gas (Gwei) tertentu untuk setiap transaksi |
-| **Gas Mode: Aggressive** | Boost gas price dengan persentase tertentu untuk prioritas tinggi |
-| **Manual RPC Input Only** | Tidak ada RPC bawaan/default. Pengguna wajib memasukkan RPC secara manual melalui menu bot demi privasi dan keamanan. |
+| **Multi-RPC Manager** | Easily save, select, and delete RPC configurations (EVM, Solana, Aptos, Sui, TON, NEAR) |
+| **Gas Mode: Auto** | Automatic gas price estimation from the network |
+| **Gas Mode: Manual** | Force specific gas values (Gwei) for each transaction |
+| **Gas Mode: Aggressive** | Boost gas price by a certain percentage for high priority |
+| **Manual RPC Input Only** | No default/built-in RPCs. Users must enter RPCs manually via the bot menu for privacy and security. |
 
-### 🔐 Keamanan Berlapis
+### 🔐 Layered Security
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Two-Factor Auth (2FA)** | Google Authenticator (TOTP RFC 6238) untuk proteksi setup, login, dan persetujuan perubahan kode/konfigurasi |
-| **Dual Password System** | Password terpisah untuk akses Administrator dan Script |
-| **Proteksi Folder .data/** | Deteksi otomatis jika folder tersembunyi .data/ dihapus, bot memblokir startup dan meminta verifikasi OTP untuk memulihkan folder |
-| **RAM-Cached Localization** | Sistem terjemahan multibahasa (ID/EN) instan yang dioptimalkan dengan memori RAM cache untuk menghindari kelambatan/delay dekripsi disk |
-| **Enkripsi AES-256-GCM** | Semua data wallet dienkripsi dengan standar militer |
-| **Enkripsi .env** | Seluruh nilai konfigurasi di `.env` dienkripsi (bukan plaintext) |
-| **Whitelist Chat ID** | Hanya Telegram ID yang terdaftar yang bisa mengakses bot |
-| **Sesi Terpisah** | Setiap pengguna mendapat session terenkripsi yang terisolasi |
-| **OTP Login** | Opsi masuk via kode 6-digit Google Authenticator tanpa mengetik password |
-| **Grace Period 2FA** | Periode tenggang 7 hari jika password diubah setelah 2FA dipasang |
-| **OTP Startup via Telegram** | Saat ada perubahan file/konfigurasi, OTP diminta langsung via Bot Saklar di Telegram (bukan di terminal) |
-| **Pesan Kontekstual** | Notifikasi Telegram membedakan antara perubahan konfigurasi (.env) dan modifikasi file kode program |
+| **Two-Factor Auth (2FA)** | Google Authenticator (TOTP RFC 6238) for setup, login, and configuration change approval |
+| **Dual Password System** | Separate passwords for Administrator and Script access |
+| **Folder Protection (.data/)** | Auto-detection if the hidden `.data/` directory is deleted, blocking startup and demanding OTP verification to safely restore |
+| **RAM-Cached Localization** | Optimized RAM-cached multi-language system (ID/EN) to prevent disk decryption delays |
+| **AES-256-GCM Encryption** | Military-grade encryption for all wallet data |
+| **.env Encryption** | All `.env` configuration values are encrypted (not plaintext) |
+| **Chat ID Whitelist** | Only registered Telegram IDs can access the bot |
+| **Isolated Sessions** | Every user has an isolated, encrypted session |
+| **OTP Login** | Option to log in via a 6-digit Google Authenticator code without typing a password |
+| **2FA Grace Period** | 7-day grace period if the password is changed after 2FA is active |
+| **Telegram Startup OTP** | Upon program/configuration changes, OTP is requested directly via a Telegram Switch Bot (not in terminal) |
+| **Contextual Alerts** | Telegram notifications distinguish between configuration changes (`.env`) and source code modifications |
 
 ### 🌐 DApp Connection Approval
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Mode Auto-Connect** | DApp baru langsung terhubung tanpa konfirmasi (default) |
-| **Mode Manual Approval** | Setiap koneksi DApp baru membutuhkan persetujuan via Telegram |
-| **Notifikasi DApp Connect** | Telegram mengirim detail DApp yang baru terhubung |
-| **Kelola DApp Terhubung** | Lihat daftar dan putuskan koneksi DApp kapan saja |
-| **Toggle Approval** | Aktifkan/nonaktifkan mode approval langsung dari menu Telegram |
+| **Auto-Connect Mode** | New DApps connect automatically without confirmation (default) |
+| **Manual Approval Mode** | Every new DApp connection requires manual approval via Telegram |
+| **DApp Connect Notifications** | Telegram sends detailed notifications of newly connected DApps |
+| **Connected DApp Management** | View the list of connected DApps and disconnect them at any time |
+| **Toggle Approval** | Turn approval mode on/off directly from the Telegram menu |
 
 ### 🔐 Morse Cipher Tool
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Enkripsi Teks** | Ubah teks biasa menjadi Morse kustom terenkripsi |
-| **Dekripsi Kode** | Kembalikan kode Morse ke teks aslinya |
-| **Proses File .txt** | Upload file `.txt` langsung ke Telegram untuk dienkripsi/didekripsi |
-| **Simpan Pesan** | Simpan hasil enkripsi di server dengan nama/label kustom |
-| **Proteksi Password** | Kunci pesan tersimpan dengan password tambahan (opsional) |
-| **Hapus Pesan** | Hapus pesan tersimpan dari daftar kapan saja |
-| **Database Terenkripsi** | Mapping Morse disimpan terenkripsi AES-256-CBC di dalam program |
+| **Text Encryption** | Convert plain text into custom encrypted Morse code |
+| **Code Decryption** | Decrypt Morse code back to its original plain text |
+| **Process .txt Files** | Upload `.txt` files directly to Telegram for encryption/decryption |
+| **Save Messages** | Save encrypted results on the server with custom names/labels |
+| **Password Protection** | Lock saved messages with an optional additional password |
+| **Delete Messages** | Delete saved messages from the list at any time |
+| **Encrypted Database** | Morse mapping stored encrypted using AES-256-CBC inside the program |
 
 ### 💸 Transfer Bot
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **ETH Auto-Forward** | Auto-kirim ETH ke alamat tujuan saat saldo terdeteksi |
-| **Token Auto-Forward** | Auto-kirim ERC-20 token ke alamat tujuan |
-| **Auto Token Detection** | Scan dan deteksi semua token ERC-20 yang memiliki saldo secara otomatis |
-| **Continuous Monitoring** | Pantau wallet terus-menerus dengan interval 30 detik |
-| **Gas-Safe Transfer** | Auto-kalkulasi biaya gas sebelum transfer agar saldo tidak habis untuk fee |
+| **ETH Auto-Forward** | Auto-forward ETH to a destination address when balance is detected |
+| **Token Auto-Forward** | Auto-forward ERC-20 tokens to a destination address |
+| **Auto Token Detection** | Scan and automatically detect all ERC-20 tokens with a balance |
+| **Continuous Monitoring** | Monitor wallets continuously with a 30-second interval |
+| **Gas-Safe Transfer** | Auto-calculate gas fees before transferring to ensure the balance is not drained |
 
 ### 📊 Tracking Bot (Mainnet)
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **16 Jaringan Mainnet** | Mendukung pemantauan di Ethereum, BNB Chain, Polygon, Avalanche, Fantom, Gnosis, Celo, Cronos, Arbitrum, Optimism, Base, Linea, zkSync Era, Scroll, Blast, dan Mantle |
-| **Watch-Only (Read-Only)** | Memantau wallet hanya dengan alamat publik tanpa memerlukan Private Key atau Mnemonic Phrase |
-| **USDT Valuation & Scam Alert** | Deteksi otomatis nilai USDT token masuk via CoinGecko/DexScreener API (menampilkan peringatan jika bernilai $0/tidak ada harga sebagai indikasi scam) |
-| **Riwayat Tracking Terperinci** | Riwayat transaksi dengan 5 tombol navigasi interaktif + tombol "Lihat History Lainnya" (paginated) |
-| **Filter Estimasi Nilai** | Filter notifikasi masuk berdasarkan minimum nilai estimasi dalam USDT |
-| **Kontrol Fleksibel** | Nyalakan/matikan deteksi transaksi native gas token dan token ERC-20 secara independen |
-| **Auto-Resume** | Polling tracker otomatis pulih dan aktif kembali secara otomatis ketika bot direstart |
+| **16 Mainnets Supported** | Monitor Ethereum, BNB Chain, Polygon, Avalanche, Fantom, Gnosis, Celo, Cronos, Arbitrum, Optimism, Base, Linea, zkSync Era, Scroll, Blast, and Mantle |
+| **Watch-Only (Read-Only)** | Monitor wallets using only public addresses without requiring Private Keys or Mnemonics |
+| **USDT Valuation & Scam Alert** | Auto-detect incoming ERC-20 token values in USDT via CoinGecko/DexScreener API (flags $0/no-price tokens as potential scams) |
+| **Detailed Tracking History** | View transaction history with 5 interactive navigation buttons + "View More History" (paginated) |
+| **Value Estimation Filter** | Filter incoming transaction alerts based on minimum estimated value in USDT |
+| **Flexible Control** | Independently toggle native gas token and ERC-20 token transfer monitoring |
+| **Auto-Resume** | Tracker polling automatically resumes when the bot restarts |
 
-## 📦 Instalasi
+---
 
-### Prasyarat
+## 📦 Installation
 
-- **Node.js** versi 18 atau lebih baru
-- **npm** (sudah termasuk dengan Node.js)
-- Akun Telegram & Bot Token dari [@BotFather](https://t.me/BotFather)
+### Prerequisites
 
-### Langkah Instalasi
+- **Node.js** version 18 or later
+- **npm** (included with Node.js)
+- Telegram Account & Bot Token from [@BotFather](https://t.me/BotFather)
+
+### Installation Steps
 
 ```bash
-# 1. Clone atau download project dari GitHub
+# 1. Clone or download the project from GitHub
 git clone https://github.com/ferystarx123x/fastarx-bot.git
 cd fastarx-bot
 
-# 2. Install semua dependensi
+# 2. Install all dependencies
 npm install
 
-# 3. Jalankan bot (Wizard Registrasi muncul otomatis saat pertama kali)
+# 3. Run the bot (Registration Wizard appears automatically on the first launch)
 node main.js
 ```
 
-Saat **pertama kali** dijalankan, bot menampilkan **Wizard Registrasi**. Cukup isi 4 data berikut:
+When run for the **first time**, the bot will display the **Registration Wizard**. Simply enter the following 4 parameters:
 
-| Data | Contoh | Keterangan |
-|------|--------|------------|
-| **URL VPS Controller** | `wss://123.45.67.89:4433` | Diberikan oleh admin/penyedia bot |
-| **Nama Anda** | `Budi` | Nama bebas untuk identitas akun |
-| **Token Bot Telegram** | `123456:ABC-DEF...` | Dari [@BotFather](https://t.me/BotFather) |
-| **Chat ID Telegram** | `987654321` | Chat ID Telegram Anda (angka) |
+| Parameter | Example / Value | Description |
+|-----------|-----------------|-------------|
+| **URL VPS Controller** | `ws://47.88.65.187:4433` | Enter this URL (Active Controller) |
+| **Your Name** | `John` | Any name for account identification |
+| **Telegram Bot Token** | `123456:ABC-DEF...` | Obtained from [@BotFather](https://t.me/BotFather) |
+| **Telegram Chat ID** | `987654321` | Your Telegram Chat ID (numeric) |
 
-Setelah registrasi berhasil, konfigurasi tersimpan otomatis. Menjalankan `node main.js` berikutnya langsung terhubung tanpa perlu isi ulang.
+Once registration is successful, the configuration is saved automatically. Running the main bot on subsequent launches will connect directly without requiring re-entry.
 
-### Dependensi
+### Dependencies
 
-| Package | Versi | Fungsi |
+| Package | Version | Description |
 |---------|-------|--------|
-| `ethers` | ^6.16.0 | Interaksi blockchain Ethereum / EVM |
-| `@solana/web3.js` | ^1.98.4 | Interaksi blockchain Solana |
-| `@aptos-labs/ts-sdk` | ^7.2.0 | Interaksi blockchain Aptos |
-| `@mysten/sui` | ^2.20.1 | Interaksi blockchain Sui |
-| `@ton/ton` | ^16.3.0 | Interaksi blockchain TON |
-| `@ton/crypto` | ^3.3.0 | Cryptography helper untuk TON |
-| `near-api-js` | ^7.2.0 | Interaksi blockchain NEAR |
-| `@walletconnect/sign-client` | ^2.23.8 | Protokol WalletConnect v2 |
+| `ethers` | ^6.16.0 | Ethereum / EVM blockchain interactions |
+| `@solana/web3.js` | ^1.98.4 | Solana blockchain interactions |
+| `@aptos-labs/ts-sdk` | ^7.2.0 | Aptos blockchain interactions |
+| `@mysten/sui` | ^2.20.1 | Sui blockchain interactions |
+| `@ton/ton` | ^16.3.0 | TON blockchain interactions |
+| `@ton/crypto` | ^3.3.0 | Cryptography helper for TON |
+| `near-api-js` | ^7.2.0 | NEAR blockchain interactions |
+| `@walletconnect/sign-client` | ^2.23.8 | WalletConnect v2 protocol |
 | `node-telegram-bot-api` | ^0.64.0 | Telegram Bot API |
-| `dotenv` | ^16.0.0 | Load konfigurasi .env |
-| `node-os-utils` | ^2.0.1 | Monitoring resource sistem |
-| `systeminformation` | ^5.31.4 | Info hardware & OS |
+| `dotenv` | ^16.0.0 | Loads `.env` configuration |
+| `node-os-utils` | ^2.0.1 | System resource monitoring |
+| `systeminformation` | ^5.31.4 | Hardware & OS information |
 
 ---
 
-## ⚙️ Konfigurasi & Lisensi
+## ⚙️ Configuration & Licensing
 
-Berbeda dengan versi lama, bot **tidak lagi menyimpan konfigurasi sensitif secara lokal**. Seluruh konfigurasi (token, keamanan, dll) dikelola terpusat di **Server Controller (VPS)** dan dikirim ke bot Anda setelah registrasi berhasil.
+Unlike older versions, the bot **no longer stores sensitive configuration files locally**. All configuration (tokens, security variables, etc.) is managed centrally on the **Server Controller (VPS)** and delivered to your bot after successful registration.
 
-### Cara Kerja
-
-```
-1. Bot pertama kali dijalankan  →  Wizard Registrasi (lihat Instalasi)
-2. Data registrasi dikirim ke   →  VPS Controller
-3. VPS memverifikasi & menyimpan akun Anda
-4. Setiap startup, bot mengambil konfigurasi terenkripsi dari VPS
-5. Bot berjalan sesuai izin/lisensi yang diberikan admin
-```
-
-### File Konfigurasi Lokal
-
-Setelah registrasi, hanya satu file kecil yang tersimpan di sisi Anda:
+### How It Works
 
 ```
-.data/client-config.json   ← ID klien & URL VPS (BUKAN data sensitif)
+1. Bot is launched for the first time  →  Registration Wizard (see Installation)
+2. Registration data is sent to        →  VPS Controller
+3. VPS verifies and saves your account
+4. On every startup, the bot fetches encrypted configuration from the VPS
+5. The bot runs according to the permissions/licenses granted by the admin
 ```
 
-> 🔐 Token bot & data keamanan **tidak** disimpan di komputer Anda — dikirim langsung dari VPS saat runtime, lalu diproses di memori.
+### Local Configuration Files
 
-> ⚠️ **JANGAN bagikan folder `.data/` ke siapapun!**
+After registration, only one small file is saved on your machine:
+
+```
+.data/client-config.json   ← Client ID & VPS URL (NO sensitive data)
+```
+
+> 🔐 Bot tokens and security data are **never** stored on your local computer — they are sent directly from the VPS at runtime and processed solely in memory.
+
+> ⚠️ **DO NOT share your `.data/` directory with anyone!**
 
 ---
 
-## ▶️ Menjalankan Bot
+## ▶️ Running the Bot
 
 ```bash
-# Mode normal
+# Normal mode
 node main.js
 
-# Mode development (auto-restart saat file berubah)
+# Development mode (auto-restart on file changes)
 npm run dev
 ```
 
-Bot akan otomatis mendeteksi mode:
+The bot will automatically detect its running mode:
 
-- **🤖 Telegram Mode** → Jika `TELEGRAM_BOT_TOKEN` tersedia
-- **💻 Terminal Mode** → Jika token tidak ditemukan (mode CLI)
+- **🤖 Telegram Mode** → If `TELEGRAM_BOT_TOKEN` is available
+- **💻 Terminal Mode** → If no token is found (CLI mode)
 
 ---
 
-## 📱 Panduan Penggunaan Telegram
+## 📱 Telegram Usage Guide
 
 ### Login
 
-1. Buka bot di Telegram → kirim `/start`
-2. Pilih level akses: **Administrator** atau **Script**
-3. Masukkan password:
-   * **Password Admin Bawaan (Default)**: `0xfastarx`
-   * Masukkan password tersebut untuk login pertama kali, atau gunakan **Google Authenticator** jika 2FA sudah aktif.
+1. Open the bot on Telegram → send `/start`
+2. Select your access level: **Administrator** or **Script**
+3. Enter your password, or use **Google Authenticator** if 2FA is active.
 
-### Menu Utama
+### Main Menu
 
 ```
-💼 Wallet Management    →  Kelola wallet (import, generate, backup, hapus)
-🌐 RPC Management       →  Kelola konfigurasi RPC & gas
-🔗 WalletConnect        →  Connect ke DApp via WalletConnect
-🦊 Extension Inject     →  Kelola server Extension Inject
-📂 Menu Lainnya         →  Transfer Bot, Morse Cipher, Tracking Bot (Mainnet), dll
-⚙️ Pengaturan           →  DApp Approval, ganti password, dll
+💼 Wallet Management    →  Manage wallets (import, generate, backup, delete)
+🌐 RPC Management       →  Manage RPC & gas configurations
+🔗 WalletConnect        →  Connect to DApps via WalletConnect
+🦊 Extension Inject     →  Manage Extension Inject server
+📂 Other Menus          →  Transfer Bot, Morse Cipher, Tracking Bot (Mainnet), etc.
+⚙️ Settings              →  DApp Approval, change password, etc.
 ```
 
-### Perintah Telegram
+### Telegram Commands
 
-| Perintah | Fungsi |
+| Command | Function |
 |----------|--------|
-| `/start` | Mulai bot & login |
-| `/menu` | Tampilkan menu utama |
-| `/status` | Status bot & koneksi saat ini |
+| `/start` | Start the bot & log in |
+| `/menu` | Display the main menu |
+| `/status` | Check current bot & connection status |
 
-### Alur Extension Inject
-
-```
-1. Buka menu 🦊 Extension Inject di Telegram
-2. Pilih port → Start Server
-3. Salin URL RPC: http://127.0.0.1:<port>
-4. Buka MetaMask → Settings → Networks → Add Network
-   - Network Name: (bebas)
-   - RPC URL      : http://127.0.0.1:<port>
-   - Chain ID     : (sesuai konfigurasi)
-5. Ganti ke network baru di MetaMask
-6. Setiap transaksi dari DApp → bot otomatis sign & kirim! ✅
-```
-
-### Alur & Panduan Tracking Bot
+### Extension Inject Flow
 
 ```
-1. Buka menu 📂 Menu Lainnya → 📊 Tracking Bot
-2. Tambah Wallet Pemantau:
-   - Kirim alamat publik (read-only, tanpa private key/seed phrase)
-   - Beri nama/label kustom
-   - Pilih jaringan yang ingin dipantau (bisa pilih banyak dari 16 mainnet)
-3. Set Explorer API Keys (Opsional):
-   - Masuk ke menu ⚙️ Pengaturan → 🔑 Set Explorer API Keys
-   - Masukkan API Key untuk BSC, Fantom, Cronos, atau Linea jika memantau jaringan tersebut
-4. Nyalakan Polling:
-   - Klik 🟢 Aktifkan Tracking untuk memulai pemantauan di latar belakang (tiap 45 detik)
-5. Notifikasi & Riwayat:
-   - Setiap ada transfer masuk akan dikirim detail nominal & nilai USDT estimasinya
-   - Klik 📜 History Tracking untuk melihat riwayat transaksi masuk paginated (5 item per halaman)
+1. Open the 🦊 Extension Inject menu in Telegram
+2. Select a port → Start Server
+3. Copy the RPC URL: http://127.0.0.1:<port>
+4. Open MetaMask → Settings → Networks → Add Network
+   - Network Name: (any name)
+   - RPC URL     : http://127.0.0.1:<port>
+   - Chain ID    : (matching your configuration)
+5. Switch to the new network in MetaMask
+6. Any transaction initiated from DApps → the bot will automatically sign & send! ✅
+```
+
+### Tracking Bot Setup & Guide
+
+```
+1. Open 📂 Other Menus → 📊 Tracking Bot
+2. Add Watcher Wallet:
+   - Send the public address (read-only, no private key or seed phrase required)
+   - Set a custom name/label
+   - Select the mainnets you want to monitor (up to 16 supported mainnets)
+3. Set Explorer API Keys (Optional):
+   - Go to ⚙️ Settings → 🔑 Set Explorer API Keys
+   - Enter API Keys for BSC, Fantom, Cronos, or Linea to monitor those networks
+4. Enable Polling:
+   - Click 🟢 Enable Tracking to start background monitoring (every 45 seconds)
+5. Notifications & History:
+   - Incoming transactions will trigger alerts showing details and estimated USDT values
+   - Click 📜 Tracking History to view paginated incoming transaction history (5 items per page)
 ```
 
 ---
 
-## 🎛️ Manajemen & Lisensi (Sisi Admin)
+## 🎛️ Management & Licensing (Admin Side)
 
-Bot ini dikelola secara terpusat oleh **admin/penyedia** melalui **Server Controller** yang berjalan di VPS. Sebagai pengguna, Anda **tidak perlu** menjalankan atau mengelola bagian ini — semuanya berjalan otomatis setelah registrasi.
+This bot is centrally managed by the **admin/provider** via the **Server Controller** running on the VPS. As a user, you **do not need** to run or manage this part — everything happens automatically after registration.
 
-### Yang Dikelola Admin
+### Admin Controls
 
-| Fitur | Deskripsi |
+| Feature | Description |
 |-------|-----------|
-| **Aktivasi Akun** | Admin mengaktifkan akun Anda setelah registrasi berhasil |
-| **Masa Aktif Lisensi** | Admin mengatur masa berlaku penggunaan bot Anda |
-| **Kontrol Real-Time** | Admin dapat mengaktifkan/menonaktifkan akses bot Anda kapan saja via Telegram |
-| **Distribusi Konfigurasi** | Token & konfigurasi keamanan dikirim otomatis dari VPS ke bot Anda |
+| **Account Activation** | Admin activates your account after successful registration |
+| **License Expiration** | Admin configures your license duration |
+| **Real-Time Control** | Admin can enable/disable your bot access at any time via Telegram |
+| **Config Distribution** | Tokens & security configurations are auto-sent from the VPS to your bot |
 
-### Jika Bot Tidak Bisa Terhubung
+### Troubleshooting Connections
 
 ```
-1. Pastikan koneksi internet Anda aktif
-2. Pastikan URL VPS Controller yang dimasukkan benar (wss://IP:PORT)
-3. Hubungi admin/penyedia untuk memastikan:
-   - Lisensi/akun Anda masih aktif
-   - Server Controller sedang berjalan
+1. Ensure your internet connection is active
+2. Verify that the VPS Controller URL entered is correct (ws://IP:PORT)
+3. Contact the admin/provider to check:
+   - If your license/account is still active
+   - If the Controller Server is currently running
 ```
 
-> 💡 Bot hanya berjalan selama Server Controller aktif dan lisensi Anda diizinkan oleh admin.
+> 💡 The bot will only run while the Controller Server is active and your license is approved by the admin.
 
 ---
 
 ## 🦊 Browser Extension
 
-Bot ini dilengkapi **tiga versi browser extension** untuk kemudahan integrasi dengan DApp:
+The bot includes **three versions of browser extensions** for seamless integration with DApps:
 
 ### Chrome Extension (Manifest V3)
-> Lokasi: `extension bot metamaks/`
+> Location: `extension bot metamaks/`
 ```
-Versi    : 4.0.0
-Support  : Chrome, Brave, Edge (Chromium)
+Version    : 4.0.0
+Supports   : Chrome, Brave, Edge (Chromium)
 ```
 
 ### Bitget Wallet Extension (Manifest V3)
-> Lokasi: `extension bot bitget/`
+> Location: `extension bot bitget/`
 ```
-Versi    : 1.0.0
-Support  : Chrome, Brave, Edge (Chromium)
-Deskripsi: Ekstensi khusus yang menyamar sebagai Bitget Wallet untuk menyalurkan request DApp secara aman ke server Extension Inject lokal.
+Version    : 1.0.0
+Supports   : Chrome, Brave, Edge (Chromium)
+Description: A custom extension disguised as Bitget Wallet to safely route DApp requests to the local Extension Inject server.
 ```
 
 ### Firefox Extension
-> Lokasi: `fastarx-firefox extension/`
+> Location: `fastarx-firefox extension/`
 ```
-Support  : Firefox, Firefox ESR
+Supports   : Firefox, Firefox ESR
 ```
 
-### Cara Install Extension
+### How to Install Extensions
 
 **Chrome / Bitget Extension:**
-1. Buka `chrome://extensions/`
-2. Aktifkan **Developer Mode**
-3. Klik **Load unpacked** → pilih folder extension yang diinginkan (`extension bot metamaks/` atau `extension bot bitget/`)
+1. Open `chrome://extensions/`
+2. Enable **Developer Mode**
+3. Click **Load unpacked** → select the desired extension folder (`extension bot metamaks/` or `extension bot bitget/`)
 
 **Firefox:**
-1. Buka `about:debugging`
-2. Klik **This Firefox** → **Load Temporary Add-on**
-3. Pilih file `manifest.json` dari folder `fastarx-firefox extension/`
+1. Open `about:debugging`
+2. Click **This Firefox** → **Load Temporary Add-on**
+3. Select the `manifest.json` file inside the `fastarx-firefox extension/` folder
 
-> 💡 Extension otomatis menginject provider Ethereum ke DApp dan mengarahkan request ke server RPC lokal bot.
+> 💡 Extensions automatically inject the Ethereum provider into DApps and redirect requests to the bot's local RPC server.
 
 ---
 
-## 🔒 Keamanan
+## 🔒 Security
 
-### 🛡️ Sistem Integrity Guard (Self-Defeating Code)
-Untuk mencegah AI atau pihak tidak berwenang memodifikasi basis kode bot secara diam-diam, sistem dilengkapi dengan **Integrity Guard** tingkat tinggi:
+### 🛡️ Integrity Guard System (Self-Defeating Code)
+To prevent unauthorized modifications or tampering with the codebase, the bot is protected by a high-grade **Integrity Guard**:
 
-* **Live Hash Project Binding**: Kunci dekripsi untuk `.env` tidak lagi disimpan statis, melainkan diturunkan secara dinamis menggunakan gabungan master key dan **SHA-256 live hash** dari seluruh berkas kode sumber (`bot/`, `utils/`, `core/`, `transfer/`, `config/`, `modes/`, `auth/`, `rpc/`, `main.js`, `package.json`, `package-lock.json`, serta file marker pertahanan ganda).
-* **Self-Defeating (Auto-Brick)**: Jika kode sumber dimodifikasi sedikit saja (bahkan 1 karakter spasi pun), kunci dekripsi `.env` akan berubah secara matematis, mengakibatkan dekripsi konfigurasi gagal (`bad decrypt`), dan bot otomatis mengunci diri sebelum script berbahaya sempat dieksekusi.
-* **Verifikasi OTP via Telegram**: Setiap ada perubahan kode/konfigurasi, Bot Utama menghubungi **Bot Saklar** secara lokal (HTTP port 3099). Bot Saklar mengirim notifikasi ke Telegram Admin dengan pesan yang **berbeda dan kontekstual** — pesan berbeda untuk perubahan konfigurasi `.env` vs modifikasi file kode program. Admin cukup memasukkan OTP 6 digit di Telegram, tanpa perlu akses terminal/SSH.
-* **Fallback CLI**: Jika Bot Saklar tidak aktif saat startup, sistem otomatis fallback ke input OTP/password via terminal.
-* **Auto-Recovery**: Jika file kunci integritas `.integrity.lock` hilang atau dirusak secara paksa, bot akan masuk ke mode pemulihan (recovery) dan meminta Password Admin untuk memulihkan database dari cadangan aman `.system-integrity-check`.
-* **Proteksi Folder .data/**: Jika folder tersembunyi `.data/` hilang atau sengaja dihapus, bot akan memblokir startup dan meminta verifikasi OTP sebelum memulihkan folder data kosong secara aman untuk mencegah bypass atau kehilangan kunci enkripsi sesi.
+* **Live Hash Project Binding**: The decryption key for `.env` is dynamically derived using a combination of the master key and the **SHA-256 live hash** of all project source files (`bot/`, `utils/`, `core/`, `transfer/`, `config/`, `modes/`, `auth/`, `rpc/`, `main.js`, `package.json`, `package-lock.json`, and all dual-defense security markers).
+* **Self-Defeating (Auto-Brick)**: If the source code is modified by even 1 character (including spaces), the decryption key will mismatch, causing configuration decryption to fail (`bad decrypt`), and the bot will lock itself before any malicious code can execute.
+* **Telegram OTP Verification**: When a code/configuration change is detected, the main bot contacts the local **Switch Bot** (HTTP port 3099). The Switch Bot sends a **contextual notification** to the admin's Telegram (differentiating between `.env` edits and source code modifications). The admin enters a 6-digit OTP via Telegram to authorize the changes without needing SSH/terminal access.
+* **CLI Fallback**: If the Switch Bot is offline at startup, the system automatically falls back to requesting the OTP/password via terminal.
+* **Auto-Recovery**: If the integrity lock file `.integrity.lock` is deleted or tampered with, the bot enters recovery mode and requests the Admin Password to restore the database from the secure backup `.system-integrity-check`.
+* **Folder Protection (.data/)**: If the hidden `.data/` directory is missing or deleted, the bot will block startup and request OTP verification before safely restoring a fresh data directory, preventing session bypasses.
 
-### Sistem Enkripsi
+### Encryption Details
 
-| Data | Metode Enkripsi |
+| Data | Encryption Method |
 |------|----------------|
-| File `.env` | AES-256-CBC (PBKDF2 key dinamis terikat Live Hash Proyek) |
-| Data Wallet | AES-256-GCM (auth tag, per-session key) |
-| File Pertahanan Ganda | AES-256-GCM (PBKDF2 master key 100K iterasi) |
-| Pesan Morse | AES-256-CBC (Scrypt key derivation) |
-| Mapping Morse | AES-256-CBC (embedded in source) |
-| Password Hash | PBKDF2-SHA512 (1000 iterasi) |
+| `.env` File | AES-256-CBC (dynamic PBKDF2 key bound to Live Hash) |
+| Wallet Data | AES-256-GCM (auth tag, per-session key) |
+| Dual Defense Markers | AES-256-GCM (PBKDF2 master key 100K iterations) |
+| Morse Messages | AES-256-CBC (Scrypt key derivation) |
+| Morse Mappings | AES-256-CBC (embedded in source) |
+| Password Hashes | PBKDF2-SHA512 (1000 iterations) |
 
 ### Best Practices
 
-- ✅ Jalankan bot hanya di server yang Anda percaya
-- ✅ Gunakan 2FA (Google Authenticator) untuk keamanan ekstra
-- ✅ Aktifkan **DApp Approval Mode** untuk mencegah koneksi tidak dikenal
-- ✅ Backup file `.data/` secara berkala
-- ❌ Jangan pernah membagikan file `.env`, folder `.data/`, atau berkas marker keamanan bertitik (`.*`)
-- ❌ Jangan expose port Extension Inject ke internet tanpa firewall
+- ✅ Run the bot only on servers you fully trust
+- ✅ Enable 2FA (Google Authenticator) for maximum security
+- ✅ Turn on **DApp Approval Mode** to prevent unknown connections
+- ✅ Regularly backup the `.data/` directory
+- ❌ Never share your `.env` file, `.data/` folder, or hidden security markers (`.*`)
+- ❌ Do not expose the Extension Inject ports to the internet without a firewall
 
 ---
 
-## 📁 Struktur Direktori `.data/`
+## 📁 Directory Structure `.data/`
 
-Data per-sesi disimpan di folder tersembunyi `.data/` dengan format:
+Per-session data is stored in the hidden `.data/` folder in the following format:
 
 ```
 .data/
-├── <session_id>_wallets.enc        ← Wallet terenkripsi (AES-256-GCM)
-├── <session_id>_rpc-config.json    ← Konfigurasi RPC & DApp
-├── <session_id>_rpc-ports.json     ← Konfigurasi port Extension Inject
-├── <session_id>_master.key         ← Kunci enkripsi session (RAHASIA!)
-├── <chat_id>_tracked_wallets.json  ← Daftar wallet pemantauan tracker
-├── <chat_id>_tracker_state.json     ← Status aktif & cursor filter tracker
-├── <chat_id>_tracker_history.json   ← Riwayat notifikasi transaksi tracker
-└── .2fa_config.enc                 ← Konfigurasi 2FA terenkripsi
+├── <session_id>_wallets.enc        ← Encrypted wallets (AES-256-GCM)
+├── <session_id>_rpc-config.json    ← RPC & DApp configurations
+├── <session_id>_rpc-ports.json     ← Extension Inject port settings
+├── <session_id>_master.key         ← Session encryption key (SECRET!)
+├── <chat_id>_tracked_wallets.json  ← List of tracked addresses for watcher bot
+├── <chat_id>_tracker_state.json     ← Watcher bot active status and filter cursor
+├── <chat_id>_tracker_history.json   ← Watcher bot notification history
+└── .2fa_config.enc                 ← Encrypted 2FA configuration
 ```
 
-> 🔐 File `*.enc` dan `*.key` tidak dapat dibaca tanpa kunci enkripsi yang sesuai.
+> 🔐 Files with `*.enc` and `*.key` extensions cannot be read without the correct cryptographic keys.
 
 ---
 
 <div align="center">
 
-**Dibuat dengan ❤️ oleh FA STARX**
+**Made with ❤️ by FA STARX**
 
-*Gunakan dengan bijak dan bertanggung jawab.*
+*Use wisely and responsibly.*
 
 </div>
