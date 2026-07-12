@@ -45,6 +45,14 @@ function createBackup(chatId, password, dataDir) {
     const backupGuardFile = path.join(dataDir, `user_${idStr}`, 'backup_guard.enc');
     const backupGuard = fs.existsSync(backupGuardFile) ? fs.readFileSync(backupGuardFile).toString('base64') : null;
 
+    // Backup 2FA config (per-user subfolder)
+    const twoFaConfigFile = path.join(dataDir, `user_${idStr}`, '.2fa_config.enc');
+    const twoFaConfig = fs.existsSync(twoFaConfigFile) ? fs.readFileSync(twoFaConfigFile).toString('base64') : null;
+
+    // Backup user settings (language preference, etc)
+    const settingsFile = path.join(dataDir, `${idStr}_settings.enc`);
+    const settings = fs.existsSync(settingsFile) ? fs.readFileSync(settingsFile).toString('base64') : null;
+
     // Baca pesan morse user
     let morseMessages = [];
     if (fs.existsSync(morseDbFile)) {
@@ -121,6 +129,8 @@ function createBackup(chatId, password, dataDir) {
         nearRpc,
         explorerKeys,
         backupGuard,
+        twoFaConfig,
+        settings,
         morseMessages,
         trackedWallets,
         trackerHistory,
@@ -232,6 +242,22 @@ function restoreBackup(chatId, password, backupObj, dataDir) {
         const guardFile = path.join(userDir, 'backup_guard.enc');
         fs.writeFileSync(guardFile, Buffer.from(payload.backupGuard, 'base64'));
         try { fs.chmodSync(guardFile, 0o600); } catch (_) {}
+    }
+
+    // Restore 2FA config
+    if (payload.twoFaConfig) {
+        const userDir = path.join(dataDir, `user_${idStr}`);
+        if (!fs.existsSync(userDir)) fs.mkdirSync(userDir, { recursive: true });
+        const twoFaFile = path.join(userDir, '.2fa_config.enc');
+        fs.writeFileSync(twoFaFile, Buffer.from(payload.twoFaConfig, 'base64'));
+        try { fs.chmodSync(twoFaFile, 0o600); } catch (_) {}
+    }
+
+    // Restore user settings
+    if (payload.settings) {
+        const settingsFile = path.join(dataDir, `${idStr}_settings.enc`);
+        fs.writeFileSync(settingsFile, Buffer.from(payload.settings, 'base64'));
+        try { fs.chmodSync(settingsFile, 0o600); } catch (_) {}
     }
 
     // Restore tracked wallets
