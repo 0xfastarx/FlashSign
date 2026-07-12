@@ -88,25 +88,24 @@ class GitHubPasswordSync {
     }
 
     async initialize() {
-        console.log('🚀 INITIALIZING SECURITY SYSTEM...');
-        const fileStatus = this.checkFileStatus();
-        if (fileStatus.missing > 0) {
-            if (fileStatus.existing === 0) {
-                this.ui.showNotification('info', '📁 No security files found. Running first-time setup...');
-                await this.createSecurityFiles();
-                this.ui.showNotification('warning', '⚠️ Default passwords created. Please log in and change them.');
-            } else {
-                this.ui.showNotification('error', '🚫 TAMPERING DETECTED! Security file(s) missing. System locked.');
-                this.systemLocked = true;
-                return;
-            }
-        } else {
-            console.log('✅ Security file integrity check passed.');
-        }
-        await this.readPasswordsFromFiles();
-        const validationResult = await this.validateGitHubSources();
-        if (validationResult.validated) {
-            this.ui.showNotification('success', '✅ GitHub validation successful!');
+        // ══════════════════════════════════════════════════════════════════════
+        // ARSITEKTUR BARU (VPS-CENTRALIZED)
+        // ----------------------------------------------------------------------
+        // Semua konfigurasi keamanan (password admin & script) dikirim dari Server
+        // Controller (VPS) dan sudah tersedia di memori lewat constructor
+        // (this.adminPassword / this.scriptPassword). Bot TIDAK lagi menulis atau
+        // membaca folder .security lokal — seluruh file keamanan hidup di controller
+        // pada users/<id>/.security/. Folder bot user tetap BERSIH tanpa .security.
+        //
+        // Efek samping penting: karena tidak ada penulisan .security saat runtime,
+        // project-hash tidak berubah saat bot berjalan, sehingga tamper-detection
+        // tidak lagi salah menghukum bot atas tulisannya sendiri.
+        // ══════════════════════════════════════════════════════════════════════
+        console.log('🔐 Security system aktif (sumber: VPS Controller · in-memory · tanpa .security lokal).');
+        this.systemLocked = false;
+
+        if (!this.adminPassword || !this.scriptPassword) {
+            console.warn('⚠️ Password admin/script belum lengkap dari VPS config — cek konfigurasi user di controller (users/<id>/.security/.env).');
         }
         return true;
     }
@@ -205,53 +204,64 @@ class GitHubPasswordSync {
                     console.log(`✅ ${source.name}: Connected`);
                 } else {
                     this.githubStatus[source.name] = { connected: false, password: null };
-                    console.log(`❌ ${source.name}: Offline`);
+                    console.log(`❌ ${source.name}: Offline/Not Configured`);
                 }
             });
             
-            if (validResults.length === 2 && validResults[0] === validResults[1]) {
+            if (validResults.length > 0) {
+                if (validResults.length === 2 && validResults[0] !== validResults[1]) {
+                    return { validated: false, message: 'Konsensus gagal: Password MAIN dan BACKUP tidak sama' };
+                }
+                const resolvedPassword = validResults[0];
                 this.consensusAchieved = true;
-                this.scriptPassword = validResults[0];
-                await this.updateSecurityFilesWithGitHubPassword(validResults[0]);
-                return { validated: true, message: 'Dual GitHub validation passed' };
+                this.scriptPassword = resolvedPassword;
+                await this.updateSecurityFilesWithGitHubPassword(resolvedPassword);
+                return { validated: true, message: 'GitHub validation successful' };
             }
-            return { validated: false, message: `GitHub status: ${validResults.length}/2 connected` };
+            return { validated: false, message: 'GitHub status: 0 connected' };
         } catch (error) {
             this.ui.stopLoading();
-            return { validated: false, message: 'Validation error' };
+            return { validated: false, message: 'Validation error: ' + error.message };
         }
     }
 
     async fetchGitHubConfig(source) {
         return new Promise((resolve, reject) => {
-            const url = new URL(source.url);
-            const options = {
-                hostname: url.hostname, port: 443, path: url.pathname, method: 'GET',
-                headers: { 'User-Agent': 'FASTARX-BOT/1.0' },
-                timeout: 10000
-            };
-            const req = https.request(options, (res) => {
-                let data = '';
-                res.on('data', (chunk) => data += chunk);
-                res.on('end', () => {
-                    try {
-                        if (res.statusCode === 200) {
-                            const config = JSON.parse(data);
-                            const password = this.extractPassword(config);
-                            if (password) resolve(password);
-                            else reject(new Error('No password found in JSON'));
-                        } else reject(new Error(`HTTP ${res.statusCode}`));
-                    } catch (error) { 
-                        reject(new Error('Parse error')); 
-                    }
+            if (!source || !source.url || typeof source.url !== 'string' || !source.url.startsWith('http')) {
+                return resolve(null);
+            }
+            try {
+                const url = new URL(source.url);
+                const options = {
+                    hostname: url.hostname, port: 443, path: url.pathname, method: 'GET',
+                    headers: { 'User-Agent': 'FASTARX-BOT/1.0' },
+                    timeout: 10000
+                };
+                const req = https.request(options, (res) => {
+                    let data = '';
+                    res.on('data', (chunk) => data += chunk);
+                    res.on('end', () => {
+                        try {
+                            if (res.statusCode === 200) {
+                                const config = JSON.parse(data);
+                                const password = this.extractPassword(config);
+                                if (password) resolve(password);
+                                else reject(new Error('No password found in JSON'));
+                            } else reject(new Error(`HTTP ${res.statusCode}`));
+                        } catch (error) { 
+                            reject(new Error('Parse error')); 
+                        }
+                    });
                 });
-            });
-            req.on('error', reject);
-            req.on('timeout', () => { 
-                req.destroy(); 
-                reject(new Error('Timeout')); 
-            });
-            req.end();
+                req.on('error', reject);
+                req.on('timeout', () => { 
+                    req.destroy(); 
+                    reject(new Error('Timeout')); 
+                });
+                req.end();
+            } catch (e) {
+                reject(e);
+            }
         });
     }
 
@@ -308,25 +318,31 @@ class GitHubPasswordSync {
             this.notify2FAPasswordChanged('script');
         }
 
-        const timestamp = new Date().toISOString();
-        const adminFiles = ['.admin-password-secure', '.secure-backup-marker', '.system-integrity-check'];
-        for (const file of this.securityFiles) {
-            if (adminFiles.includes(file)) continue; 
-            const filePath = path.join(projectRoot, '.security', file);
-            try {
-                let fileData = {
-                    password: newPassword, timestamp: timestamp, type: 'SECURITY_FILE',
-                    filePurpose: file, securityLevel: 'GITHUB_VALIDATED', validatedBy: 'DUAL_GITHUB'
-                };
-                const encryptedData = this.encryptData(JSON.stringify(fileData));
-                const finalData = { ...encryptedData, metadata: { system: 'FA_STARX_BOT', created: timestamp, githubValidated: true } };
-                fs.writeFileSync(filePath, JSON.stringify(finalData, null, 2));
-            } catch (error) { 
-                console.log(`❌ Failed to update ${file}`); 
+        const secDir = path.join(projectRoot, '.security');
+        if (fs.existsSync(secDir)) {
+            const timestamp = new Date().toISOString();
+            const adminFiles = ['.admin-password-secure', '.secure-backup-marker', '.system-integrity-check'];
+            for (const file of this.securityFiles) {
+                if (adminFiles.includes(file)) continue; 
+                const filePath = path.join(projectRoot, '.security', file);
+                try {
+                    let fileData = {
+                        password: newPassword, timestamp: timestamp, type: 'SECURITY_FILE',
+                        filePurpose: file, securityLevel: 'GITHUB_VALIDATED', validatedBy: 'DUAL_GITHUB'
+                    };
+                    const encryptedData = this.encryptData(JSON.stringify(fileData));
+                    const finalData = { ...encryptedData, metadata: { system: 'FA_STARX_BOT', created: timestamp, githubValidated: true } };
+                    fs.writeFileSync(filePath, JSON.stringify(finalData, null, 2));
+                } catch (error) { 
+                    console.log(`❌ Failed to update ${file}`); 
+                }
             }
+            console.log('✅ Script password files updated with GitHub password');
+        } else {
+            console.log('🔐 [In-Memory Only] Password updated in memory, skipping disk write.');
         }
+        
         this.scriptPassword = newPassword;
-        console.log('✅ Script password files updated with GitHub password');
         if (passwordChanged) {
             console.log('⏳ [2FA] Grace period 7 hari dimulai untuk 2FA SCRIPT.');
         }

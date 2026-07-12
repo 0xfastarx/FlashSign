@@ -2,7 +2,7 @@
 const readline = require('readline');
 const ModernUI = require('../core/ModernUI');
 const GitHubPasswordSync = require('../auth/GitHubPasswordSync');
-const CryptoAutoTx = require('../bot/CryptoAutoTx');
+const CryptoAutoTx = process.CryptoAutoTx || require('../bot/CryptoAutoTx');
 const TelegramBot = require('node-telegram-bot-api');
 const ui = new ModernUI();
 

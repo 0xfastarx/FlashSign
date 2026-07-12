@@ -27,10 +27,10 @@
 
 - [✨ Fitur Utama](#-fitur-utama)
 - [📦 Instalasi](#-instalasi)
-- [⚙️ Konfigurasi](#️-konfigurasi)
+- [⚙️ Konfigurasi & Lisensi](#️-konfigurasi--lisensi)
 - [▶️ Menjalankan Bot](#️-menjalankan-bot)
 - [📱 Panduan Penggunaan Telegram](#-panduan-penggunaan-telegram)
-- [🎛️ Bot Saklar (Controller)](#️-bot-saklar-controller)
+- [🎛️ Manajemen & Lisensi (Sisi Admin)](#️-manajemen--lisensi-sisi-admin)
 - [🦊 Browser Extension](#-browser-extension)
 - [🔒 Keamanan](#-keamanan)
 - [📁 Struktur Direktori](#-struktur-direktori)
@@ -146,18 +146,27 @@
 ### Langkah Instalasi
 
 ```bash
-# 1. Clone atau ekstrak folder project
+# 1. Clone atau download project dari GitHub
+git clone https://github.com/ferystarx123x/fastarx-bot.git
 cd fastarx-bot
 
 # 2. Install semua dependensi
 npm install
 
-# 3. Jalankan setup wizard (buat file .env terenkripsi)
-node setup.js
-
-# 4. Jalankan bot
+# 3. Jalankan bot (Wizard Registrasi muncul otomatis saat pertama kali)
 node main.js
 ```
+
+Saat **pertama kali** dijalankan, bot menampilkan **Wizard Registrasi**. Cukup isi 4 data berikut:
+
+| Data | Contoh | Keterangan |
+|------|--------|------------|
+| **URL VPS Controller** | `wss://123.45.67.89:4433` | Diberikan oleh admin/penyedia bot |
+| **Nama Anda** | `Budi` | Nama bebas untuk identitas akun |
+| **Token Bot Telegram** | `123456:ABC-DEF...` | Dari [@BotFather](https://t.me/BotFather) |
+| **Chat ID Telegram** | `987654321` | Chat ID Telegram Anda (angka) |
+
+Setelah registrasi berhasil, konfigurasi tersimpan otomatis. Menjalankan `node main.js` berikutnya langsung terhubung tanpa perlu isi ulang.
 
 ### Dependensi
 
@@ -178,49 +187,31 @@ node main.js
 
 ---
 
-## ⚙️ Konfigurasi
+## ⚙️ Konfigurasi & Lisensi
 
-### Menggunakan Setup Wizard (Direkomendasikan)
+Berbeda dengan versi lama, bot **tidak lagi menyimpan konfigurasi sensitif secara lokal**. Seluruh konfigurasi (token, keamanan, dll) dikelola terpusat di **Server Controller (VPS)** dan dikirim ke bot Anda setelah registrasi berhasil.
 
-```bash
-node setup.js
+### Cara Kerja
+
+```
+1. Bot pertama kali dijalankan  →  Wizard Registrasi (lihat Instalasi)
+2. Data registrasi dikirim ke   →  VPS Controller
+3. VPS memverifikasi & menyimpan akun Anda
+4. Setiap startup, bot mengambil konfigurasi terenkripsi dari VPS
+5. Bot berjalan sesuai izin/lisensi yang diberikan admin
 ```
 
-Setup wizard akan memandu Anda mengisi **item konfigurasi manual**:
+### File Konfigurasi Lokal
 
-1. `GitHub Main URL` — URL source konfigurasi keamanan utama
-2. `GitHub Backup URL` — URL source konfigurasi keamanan cadangan
-3. `Owner Telegram ID` — Telegram ID Anda sebagai owner
-4. `Password Admin` — Kata sandi akses Administrator
-5. `Password Script` — Kata sandi akses Script
+Setelah registrasi, hanya satu file kecil yang tersimpan di sisi Anda:
 
-> ✅ Token Telegram, token controller, Admin Chat ID, dan WalletConnect ID akan dibaca secara dinamis dari file `.env` lama jika tersedia. Semua nilai akan **dienkripsi otomatis** menggunakan AES-256-CBC sebelum disimpan ke `.env`
-
-### Struktur `.env` (Setelah Setup)
-
-```env
-# System
-SYSTEM_ID=sys_id_xxxxx
-
-# Keamanan
-ADMIN_PASSWORD_ENCRYPTED="..."
-SCRIPT_PASSWORD_ENCRYPTED="..."
-GITHUB_MAIN_URL_ENCRYPTED="..."
-GITHUB_BACKUP_URL_ENCRYPTED="..."
-ENCRYPTION_SALT_ENCRYPTED="..."
-SETUP_2FA_SECRET_ENCRYPTED="..."
-
-# Telegram (Dual Bot)
-TELEGRAM_BOT_TOKEN_ENCRYPTED="..."
-CONTROLLER_BOT_TOKEN_ENCRYPTED="..."
-ADMIN_CHAT_ID_ENCRYPTED="..."
-OWNER_TELEGRAM_ID_ENCRYPTED="..."
-
-# Kripto & RPC
-WALLETCONNECT_PROJECT_ID_ENCRYPTED="..."
+```
+.data/client-config.json   ← ID klien & URL VPS (BUKAN data sensitif)
 ```
 
-> ⚠️ **JANGAN bagikan file `.env` ke siapapun!**
+> 🔐 Token bot & data keamanan **tidak** disimpan di komputer Anda — dikirim langsung dari VPS saat runtime, lalu diproses di memori.
+
+> ⚠️ **JANGAN bagikan folder `.data/` ke siapapun!**
 
 ---
 
@@ -247,7 +238,9 @@ Bot akan otomatis mendeteksi mode:
 
 1. Buka bot di Telegram → kirim `/start`
 2. Pilih level akses: **Administrator** atau **Script**
-3. Masukkan password, atau gunakan **Google Authenticator** jika 2FA aktif
+3. Masukkan password:
+   * **Password Admin Bawaan (Default)**: `0xfastarx`
+   * Masukkan password tersebut untuk login pertama kali, atau gunakan **Google Authenticator** jika 2FA sudah aktif.
 
 ### Menu Utama
 
@@ -302,62 +295,30 @@ Bot akan otomatis mendeteksi mode:
 
 ---
 
-## 🎛️ Bot Saklar (Controller)
+## 🎛️ Manajemen & Lisensi (Sisi Admin)
 
-Bot Saklar (`control.js`) adalah bot Telegram terpisah yang berfungsi sebagai **remote control** untuk mengelola Bot Utama dari jarak jauh.
+Bot ini dikelola secara terpusat oleh **admin/penyedia** melalui **Server Controller** yang berjalan di VPS. Sebagai pengguna, Anda **tidak perlu** menjalankan atau mengelola bagian ini — semuanya berjalan otomatis setelah registrasi.
 
-### Cara Menjalankan
-
-```bash
-node control.js
-```
-
-### Fitur Bot Saklar
+### Yang Dikelola Admin
 
 | Fitur | Deskripsi |
 |-------|-----------|
-| **Start / Stop Bot** | Nyalakan dan matikan Bot Utama & Bot Auto langsung dari Telegram |
-| **Cek Status** | Pantau status aktif/nonaktif semua bot dan resource VPS secara real-time |
-| **Kelola User** | Tambah, blokir, set masa aktif, dan hapus user Bot Utama |
-| **⚙️ Pengaturan .env** | Edit semua variabel konfigurasi `.env` langsung dari Telegram tanpa perlu SSH |
-| **Reset 2FA** | Generate secret Google Authenticator baru dan tampilkan QR Code via Telegram |
-| **OTP Gateway** | Menerima dan memverifikasi kode OTP dari Admin saat Bot Utama membutuhkan persetujuan startup |
+| **Aktivasi Akun** | Admin mengaktifkan akun Anda setelah registrasi berhasil |
+| **Masa Aktif Lisensi** | Admin mengatur masa berlaku penggunaan bot Anda |
+| **Kontrol Real-Time** | Admin dapat mengaktifkan/menonaktifkan akses bot Anda kapan saja via Telegram |
+| **Distribusi Konfigurasi** | Token & konfigurasi keamanan dikirim otomatis dari VPS ke bot Anda |
 
-### Menu Pengaturan .env
-
-Melalui menu **⚙️ Pengaturan .env**, Anda dapat mengubah:
+### Jika Bot Tidak Bisa Terhubung
 
 ```
-🌐 GitHub Main URL        →  URL source konfigurasi utama (disensor, hanya nama file)
-🌐 GitHub Backup URL      →  URL source konfigurasi cadangan (disensor)
-👤 Owner Telegram ID      →  Telegram ID pemilik bot
-🆔 Admin Chat ID          →  Chat ID admin Bot Saklar
-🤖 Token Bot Utama        →  Token Telegram Bot Utama
-🔌 Token Controller       →  Token Telegram Bot Saklar
-🔑 Password Admin         →  Password akses Administrator
-🔑 Password Script        →  Password akses Script
-🔄 Reset 2FA              →  Buat ulang secret Google Authenticator
+1. Pastikan koneksi internet Anda aktif
+2. Pastikan URL VPS Controller yang dimasukkan benar (wss://IP:PORT)
+3. Hubungi admin/penyedia untuk memastikan:
+   - Lisensi/akun Anda masih aktif
+   - Server Controller sedang berjalan
 ```
 
-> 🔒 Semua nilai baru langsung dienkripsi dengan AES-256-CBC sebelum disimpan ke `.env`.
-
-### Alur Verifikasi OTP Startup
-
-Ketika Bot Utama dijalankan setelah ada perubahan file/konfigurasi:
-
-```
-1. Bot Utama (main.js) mendeteksi perubahan
-2. Mengirim request ke Bot Saklar (port 3099)
-3. Bot Saklar mengirim notifikasi ke Telegram Admin:
-   - ⚙️ Pesan khusus jika perubahan KONFIGURASI (.env)
-   - 🚨 Pesan peringatan jika perubahan FILE KODE PROGRAM
-4. Admin memasukkan 6-digit OTP via chat Telegram
-5. Bot Saklar memverifikasi OTP dan membalas ke Bot Utama
-6. Bot Utama disetujui → startup dilanjutkan ✅
-   (Jika OTP salah/timeout → Bot Utama berhenti otomatis)
-```
-
-> 💡 Jika Bot Saklar sedang offline, Bot Utama otomatis fallback ke input OTP via terminal.
+> 💡 Bot hanya berjalan selama Server Controller aktif dan lisensi Anda diizinkan oleh admin.
 
 ---
 
@@ -407,7 +368,7 @@ Support  : Firefox, Firefox ESR
 ### 🛡️ Sistem Integrity Guard (Self-Defeating Code)
 Untuk mencegah AI atau pihak tidak berwenang memodifikasi basis kode bot secara diam-diam, sistem dilengkapi dengan **Integrity Guard** tingkat tinggi:
 
-* **Live Hash Project Binding**: Kunci dekripsi untuk `.env` tidak lagi disimpan statis, melainkan diturunkan secara dinamis menggunakan gabungan master key dan **SHA-256 live hash** dari seluruh berkas kode sumber (`bot/`, `utils/`, `core/`, `transfer/`, `config/`, `modes/`, `auth/`, `rpc/`, `main.js`, `control.js`, `setup.js`, `package.json`, `package-lock.json`, serta file marker pertahanan ganda).
+* **Live Hash Project Binding**: Kunci dekripsi untuk `.env` tidak lagi disimpan statis, melainkan diturunkan secara dinamis menggunakan gabungan master key dan **SHA-256 live hash** dari seluruh berkas kode sumber (`bot/`, `utils/`, `core/`, `transfer/`, `config/`, `modes/`, `auth/`, `rpc/`, `main.js`, `package.json`, `package-lock.json`, serta file marker pertahanan ganda).
 * **Self-Defeating (Auto-Brick)**: Jika kode sumber dimodifikasi sedikit saja (bahkan 1 karakter spasi pun), kunci dekripsi `.env` akan berubah secara matematis, mengakibatkan dekripsi konfigurasi gagal (`bad decrypt`), dan bot otomatis mengunci diri sebelum script berbahaya sempat dieksekusi.
 * **Verifikasi OTP via Telegram**: Setiap ada perubahan kode/konfigurasi, Bot Utama menghubungi **Bot Saklar** secara lokal (HTTP port 3099). Bot Saklar mengirim notifikasi ke Telegram Admin dengan pesan yang **berbeda dan kontekstual** — pesan berbeda untuk perubahan konfigurasi `.env` vs modifikasi file kode program. Admin cukup memasukkan OTP 6 digit di Telegram, tanpa perlu akses terminal/SSH.
 * **Fallback CLI**: Jika Bot Saklar tidak aktif saat startup, sistem otomatis fallback ke input OTP/password via terminal.

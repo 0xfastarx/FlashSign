@@ -1,7 +1,9 @@
-security/.env
 .env
-control
-data/
-bot/data/
-node_modules/
 .data/
+.claude/
+bot/
+control/
+node_modules/
+build-binary.js
+main.js
+.gitignore

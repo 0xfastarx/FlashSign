@@ -35,10 +35,20 @@ class IntegrityGuard {
         const isPkg = typeof process.pkg !== 'undefined';
         this.projectRoot = isPkg ? path.dirname(process.execPath) : path.join(__dirname, '..');
         this.securityDir = path.join(this.projectRoot, '.security');
-        if (!fs.existsSync(this.securityDir)) fs.mkdirSync(this.securityDir, { recursive: true });
+        // CATATAN: folder .security TIDAK dibuat di sini. Keamanan terpusat di VPS
+        // controller (users/<id>/.security/), jadi folder bot user harus tetap bersih.
+        // .security lokal hanya dibuat lewat _ensureSecurityDir() bila ada kode yang
+        // benar-benar menulis (aksi admin), bukan sekadar me-require modul ini.
         this.lockFilePath = path.join(this.securityDir, '.integrity.lock');
         this.backupFilePath = path.join(this.securityDir, '.system-integrity-check');
         this.envPath = path.join(this.securityDir, '.env');
+    }
+
+    // Buat folder .security hanya saat benar-benar dibutuhkan untuk menulis.
+    _ensureSecurityDir() {
+        if (!fs.existsSync(this.securityDir)) {
+            fs.mkdirSync(this.securityDir, { recursive: true });
+        }
     }
 
     calculateProjectHash() {
@@ -141,6 +151,7 @@ class IntegrityGuard {
             }
             data.approvedEnvHash = envHash;
             data.updatedAt = new Date().toISOString();
+            this._ensureSecurityDir();
             fs.writeFileSync(this.lockFilePath, JSON.stringify(data, null, 2));
         } catch (e) {
             console.warn('⚠️ Gagal menyimpan env hash:', e.message);
@@ -418,6 +429,7 @@ class IntegrityGuard {
             process.exit(1);
         }
 
+        this._ensureSecurityDir();
         fs.writeFileSync(this.lockFilePath, JSON.stringify({
             approvedHash: backupHash,
             updatedAt: new Date().toISOString(),
@@ -430,6 +442,7 @@ class IntegrityGuard {
 
     saveNewApprovedHash(hash, adminPassword) {
         const envHash = this._calculateEnvHash();
+        this._ensureSecurityDir();
         fs.writeFileSync(this.lockFilePath, JSON.stringify({
             approvedHash: hash,
             approvedEnvHash: envHash,
