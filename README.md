@@ -83,7 +83,7 @@
 | **Folder Protection (.data/)** | Auto-detection if the hidden `.data/` directory is deleted, blocking startup and demanding OTP verification to safely restore |
 | **RAM-Cached Localization** | Optimized RAM-cached multi-language system (ID/EN) to prevent disk decryption delays |
 | **AES-256-GCM Encryption** | Military-grade encryption for all wallet data |
-| **.env Encryption** | All `.env` configuration values are encrypted (not plaintext) |
+| **Config Encryption** | All configuration values are stored & delivered encrypted, never in plaintext |
 | **Chat ID Whitelist** | Only registered Telegram IDs can access the bot |
 | **Isolated Sessions** | Every user has an isolated, encrypted session |
 | **OTP Login** | Option to log in via a 6-digit Google Authenticator code without typing a password |
@@ -155,20 +155,28 @@ cd fastarx-bot
 # 2. Install all dependencies
 npm install
 
-# 3. Run the bot (Registration Wizard appears automatically on the first launch)
-node main.js
+# 3. Build the bot into a single ./main binary
+node build-binary.js
+
+# 4. Run the bot (Registration Wizard appears automatically on the first launch)
+./main
 ```
 
-When run for the **first time**, the bot will display the **Registration Wizard**. Simply enter the following 4 parameters:
+> 🏗️ **About the build step:** This project ships **without** the program source. Running `node build-binary.js` automatically and securely connects to the FA STARX License Server, streams the source in-memory, compiles it into a single **`./main`** executable, then deletes every temporary file — leaving only the binary behind. You never handle the source code or type any server address yourself.
+>
+> 📂 Keep `./main` **inside the project folder**. It is not fully standalone: at runtime it loads its supporting modules (`core/`, `auth/`, `utils/`, `rpc/`, `transfer/`, `modes/`, `config/`) and `node_modules/` from alongside the binary.
+
+When you launch **`./main`** for the **first time**, it displays the **Registration Wizard**. Simply provide the following:
 
 | Parameter | Example / Value | Description |
 |-----------|-----------------|-------------|
-| **URL VPS Controller** | `ws://47.88.65.187:4433` | Enter this URL (Active Controller) |
 | **Your Name** | `John` | Any name for account identification |
 | **Telegram Bot Token** | `123456:ABC-DEF...` | Obtained from [@BotFather](https://t.me/BotFather) |
-| **Telegram Chat ID** | `987654321` | Your Telegram Chat ID (numeric) |
+| **Admin Password** | `(your choice)` | Password you create for **Administrator Access** login |
 
-Once registration is successful, the configuration is saved automatically. Running the main bot on subsequent launches will connect directly without requiring re-entry.
+> 💬 **Your Telegram Chat ID is detected automatically.** Right after you enter your bot token, the wizard asks you to send `/start` to your bot on Telegram once — it then captures and saves your Chat ID for you. No manual ID entry is needed.
+
+Once registration is successful, the configuration is saved automatically. Subsequent launches of `./main` connect directly without requiring re-entry.
 
 ### Dependencies
 
@@ -180,8 +188,11 @@ Once registration is successful, the configuration is saved automatically. Runni
 | `@mysten/sui` | ^2.20.1 | Sui blockchain interactions |
 | `@ton/ton` | ^16.3.0 | TON blockchain interactions |
 | `@ton/crypto` | ^3.3.0 | Cryptography helper for TON |
+| `@ton/core` | ^0.63.1 | Core primitives for TON |
+| `ed25519-hd-key` | ^2.0.0 | Ed25519 HD key derivation (Solana/Aptos/Sui/NEAR mnemonic paths) |
 | `near-api-js` | ^7.2.0 | NEAR blockchain interactions |
 | `@walletconnect/sign-client` | ^2.23.8 | WalletConnect v2 protocol |
+| `ws` | ^8.18.0 | WebSocket client for License Server communication |
 | `node-telegram-bot-api` | ^0.64.0 | Telegram Bot API |
 | `dotenv` | ^16.0.0 | Loads `.env` configuration |
 | `node-os-utils` | ^2.0.1 | System resource monitoring |
@@ -196,10 +207,10 @@ Unlike older versions, the bot **no longer stores sensitive configuration files 
 ### How It Works
 
 ```
-1. Bot is launched for the first time  →  Registration Wizard (see Installation)
-2. Registration data is sent to        →  VPS Controller
+1. ./main is launched (first run)      →  Registration Wizard (see Installation)
+2. Registration data is sent to        →  License Server (VPS)
 3. VPS verifies and saves your account
-4. On every startup, the bot fetches encrypted configuration from the VPS
+4. On every startup, ./main fetches encrypted configuration from the VPS
 5. The bot runs according to the permissions/licenses granted by the admin
 ```
 
@@ -208,7 +219,7 @@ Unlike older versions, the bot **no longer stores sensitive configuration files 
 After registration, only one small file is saved on your machine:
 
 ```
-.data/client-config.json   ← Client ID & VPS URL (NO sensitive data)
+.data/client-config.json   ← Client ID & connection handle (no wallet keys, seeds, or bot token)
 ```
 
 > 🔐 Bot tokens and security data are **never** stored on your local computer — they are sent directly from the VPS at runtime and processed solely in memory.
@@ -220,16 +231,15 @@ After registration, only one small file is saved on your machine:
 ## ▶️ Running the Bot
 
 ```bash
-# Normal mode
-node main.js
-
-# Development mode (auto-restart on file changes)
-npm run dev
+# Run the compiled binary
+./main
 ```
 
-The bot will automatically detect its running mode:
+> ℹ️ Not built yet? Run `node build-binary.js` first (see [Installation](#-installation)).
 
-- **🤖 Telegram Mode** → If `TELEGRAM_BOT_TOKEN` is available
+On startup, the bot connects to the License Server, fetches your encrypted configuration, and automatically detects its running mode:
+
+- **🤖 Telegram Mode** → If a `TELEGRAM_BOT_TOKEN` is provisioned in your VPS configuration
 - **💻 Terminal Mode** → If no token is found (CLI mode)
 
 ---
@@ -312,8 +322,7 @@ This bot is centrally managed by the **admin/provider** via the **Server Control
 
 ```
 1. Ensure your internet connection is active
-2. Verify that the VPS Controller URL entered is correct (ws://IP:PORT)
-3. Contact the admin/provider to check:
+2. Contact the admin/provider to check:
    - If your license/account is still active
    - If the Controller Server is currently running
 ```
@@ -329,14 +338,14 @@ The bot includes **three versions of browser extensions** for seamless integrati
 ### Chrome Extension (Manifest V3)
 > Location: `extension bot metamaks/`
 ```
-Version    : 4.0.0
+Version    : 20.0.0
 Supports   : Chrome, Brave, Edge (Chromium)
 ```
 
 ### Bitget Wallet Extension (Manifest V3)
 > Location: `extension bot bitget/`
 ```
-Version    : 1.0.0
+Version    : 20.0.0
 Supports   : Chrome, Brave, Edge (Chromium)
 Description: A custom extension disguised as Bitget Wallet to safely route DApp requests to the local Extension Inject server.
 ```
@@ -344,6 +353,7 @@ Description: A custom extension disguised as Bitget Wallet to safely route DApp 
 ### Firefox Extension
 > Location: `fastarx-firefox extension/`
 ```
+Version    : 20.0.0
 Supports   : Firefox, Firefox ESR
 ```
 
@@ -366,20 +376,27 @@ Supports   : Firefox, Firefox ESR
 ## 🔒 Security
 
 ### 🛡️ Integrity Guard System (Self-Defeating Code)
-To prevent unauthorized modifications or tampering with the codebase, the bot is protected by a high-grade **Integrity Guard**:
 
-* **Live Hash Project Binding**: The decryption key for `.env` is dynamically derived using a combination of the master key and the **SHA-256 live hash** of all project source files (`bot/`, `utils/`, `core/`, `transfer/`, `config/`, `modes/`, `auth/`, `rpc/`, `main.js`, `package.json`, `package-lock.json`, and all dual-defense security markers).
-* **Self-Defeating (Auto-Brick)**: If the source code is modified by even 1 character (including spaces), the decryption key will mismatch, causing configuration decryption to fail (`bad decrypt`), and the bot will lock itself before any malicious code can execute.
-* **Telegram OTP Verification**: When a code/configuration change is detected, the main bot contacts the local **Switch Bot** (HTTP port 3099). The Switch Bot sends a **contextual notification** to the admin's Telegram (differentiating between `.env` edits and source code modifications). The admin enters a 6-digit OTP via Telegram to authorize the changes without needing SSH/terminal access.
-* **CLI Fallback**: If the Switch Bot is offline at startup, the system automatically falls back to requesting the OTP/password via terminal.
-* **Auto-Recovery**: If the integrity lock file `.integrity.lock` is deleted or tampered with, the bot enters recovery mode and requests the Admin Password to restore the database from the secure backup `.system-integrity-check`.
-* **Folder Protection (.data/)**: If the hidden `.data/` directory is missing or deleted, the bot will block startup and request OTP verification before safely restoring a fresh data directory, preventing session bypasses.
+The program source and its master configuration live **only on the FA STARX License Server (VPS)** — never on your machine. That server-side deployment is protected by a high-grade **Integrity Guard**, while the `./main` you run is a compiled, source-less binary that fetches its configuration encrypted at runtime.
+
+**On the License Server (where the source runs):**
+
+* **Live Hash Project Binding**: The decryption key for the server `.env` is dynamically derived from the master key combined with a **SHA-256 live hash** of every source file (`bot/`, `utils/`, `core/`, `transfer/`, `config/`, `modes/`, `auth/`, `rpc/`, `main.js`, `control.js`, `setup.js`, `package.json`, `package-lock.json`, and all dual-defense security markers).
+* **Self-Defeating (Auto-Brick)**: If the source is modified by even 1 character (including spaces), the derived key mismatches, configuration decryption fails (`bad decrypt`), and the system locks itself before any tampered code can execute.
+* **Telegram OTP Verification**: When a code/configuration change is detected, the controller contacts the local **Switch Bot** (HTTP port `3099`), which sends a **contextual notification** to the admin's Telegram — distinguishing `.env` edits from source-code modifications. The admin approves with a 6-digit OTP, no SSH/terminal required.
+* **CLI Fallback**: If the Switch Bot is offline, the system falls back to requesting the OTP/password via terminal.
+* **Auto-Recovery**: If the integrity lock file `.integrity.lock` is deleted or tampered with, the system enters recovery mode and requires the Admin Password to restore its signatures from the secure backup `.system-integrity-check`.
+
+**On your machine (the `./main` binary):**
+
+* **Source-less & compiled**: You never hold the source code or a plaintext `.env`. `./main` is a single binary (produced by `node build-binary.js`); its tokens and keys are streamed **encrypted from the License Server per session** and processed only in memory.
+* **Folder Protection (`.data/`)**: If the hidden `.data/` directory is missing or deleted, the bot blocks startup and requires OTP verification before safely restoring a fresh data directory — preventing session bypasses.
 
 ### Encryption Details
 
 | Data | Encryption Method |
 |------|----------------|
-| `.env` File | AES-256-CBC (dynamic PBKDF2 key bound to Live Hash) |
+| Server `.env` (VPS) | AES-256-CBC (dynamic PBKDF2 key bound to the source Live Hash) |
 | Wallet Data | AES-256-GCM (auth tag, per-session key) |
 | Dual Defense Markers | AES-256-GCM (PBKDF2 master key 100K iterations) |
 | Morse Messages | AES-256-CBC (Scrypt key derivation) |
@@ -392,12 +409,12 @@ To prevent unauthorized modifications or tampering with the codebase, the bot is
 - ✅ Enable 2FA (Google Authenticator) for maximum security
 - ✅ Turn on **DApp Approval Mode** to prevent unknown connections
 - ✅ Regularly backup the `.data/` directory
-- ❌ Never share your `.env` file, `.data/` folder, or hidden security markers (`.*`)
+- ❌ Never share your `.data/` folder or its session files (`*.enc`, `*.key`)
 - ❌ Do not expose the Extension Inject ports to the internet without a firewall
 
 ---
 
-## 📁 Directory Structure `.data/`
+## 📁 Directory Structure
 
 Per-session data is stored in the hidden `.data/` folder in the following format:
 
