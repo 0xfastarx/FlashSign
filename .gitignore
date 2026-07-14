@@ -1,9 +1,0 @@
-.env
-.data/
-.claude/
-bot/
-control/
-node_modules/
-build-binary.js
-main.js
-.gitignore
