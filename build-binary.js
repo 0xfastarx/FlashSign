@@ -75,7 +75,18 @@ const hostRequire = (() => {
 
     return (modulePath) => {
         if (modulePath.startsWith('.')) {
-            const hostFileDir = __filename.includes('bot') ? _path.join(_hostRoot, 'bot') : _hostRoot;
+            // Deteksi subdirektori secara dinamis untuk file yang berjalan di snapshot virtual biner
+            const normPath = __filename.replace(/\\\\/g, '/');
+            const parts = normPath.split('/');
+            const snapshotIdx = parts.indexOf('snapshot');
+            let relDir = '';
+            if (snapshotIdx !== -1) {
+                const subParts = parts.slice(snapshotIdx + 2, parts.length - 1);
+                if (subParts.length > 0) {
+                    relDir = subParts.join('/');
+                }
+            }
+            const hostFileDir = relDir ? _path.join(_hostRoot, relDir) : _hostRoot;
             return require(_path.resolve(hostFileDir, modulePath));
         }
         try {
@@ -121,20 +132,20 @@ function cleanupAndExit(signal) {
 // == SUMBER SOURCE: LOKAL (Offline) vs REMOTE via WSS (Online)
 // ============================================================================
 
-// Offline jika source lokal (control/main.js + control/bot/) tersedia untuk di-compile
+// Offline jika source lokal (control/main.js + control/bot/ + control/transfer/) tersedia untuk di-compile
 // langsung. Jika tidak ada (mis. user clone repo tanpa control/), gunakan Online Mode.
 function hasLocalSource() {
     return fs.existsSync(path.join(sourceDir, 'main.js')) &&
-           fs.existsSync(path.join(sourceDir, 'bot'));
+           fs.existsSync(path.join(sourceDir, 'bot')) &&
+           fs.existsSync(path.join(sourceDir, 'transfer'));
 }
 
-// Baca source lokal dari control/ menjadi objek { 'main.js': isi, 'bot/<file>': isi, ... }.
-// PENTING: key tetap relatif ('main.js' / 'bot/<file>') tanpa prefix 'control/' agar
-// build-temp tetap datar dan binary identik dengan skema lama.
+// Baca source lokal dari control/ menjadi objek.
 function readLocalSource() {
     const files = {};
     files['main.js'] = fs.readFileSync(path.join(sourceDir, 'main.js'), 'utf8');
 
+    // Scan bot/
     const botFiles = fs.readdirSync(path.join(sourceDir, 'bot'));
     for (const file of botFiles) {
         const fp = path.join(sourceDir, 'bot', file);
@@ -142,17 +153,32 @@ function readLocalSource() {
             files['bot/' + file] = fs.readFileSync(fp, 'utf8');
         }
     }
+
+    // Scan transfer/
+    const transferFiles = fs.readdirSync(path.join(sourceDir, 'transfer'));
+    for (const file of transferFiles) {
+        const fp = path.join(sourceDir, 'transfer', file);
+        if (fs.statSync(fp).isFile()) {
+            files['transfer/' + file] = fs.readFileSync(fp, 'utf8');
+        }
+    }
     return files;
 }
 
-// Hanya izinkan key 'main.js' atau 'bot/<namafile>' (cegah path traversal).
+// Hanya izinkan key 'main.js', 'bot/<namafile>', atau 'transfer/<namafile>' (cegah path traversal).
 function sanitizeRelKey(relKey) {
     if (typeof relKey !== 'string') return null;
     const norm = relKey.replace(/\\/g, '/').replace(/^\.\//, '');
     if (norm.includes('..')) return null;
     if (norm === 'main.js') return 'main.js';
-    const m = norm.match(/^bot\/([^/]+)$/);
-    return m ? 'bot/' + m[1] : null;
+    
+    const mBot = norm.match(/^bot\/([^/]+)$/);
+    if (mBot) return 'bot/' + mBot[1];
+
+    const mTransfer = norm.match(/^transfer\/([^/]+)$/);
+    if (mTransfer) return 'transfer/' + mTransfer[1];
+
+    return null;
 }
 
 // Tulis objek source ke build-temp/ (SATU-SATUNYA tempat source ditulis).
@@ -161,6 +187,7 @@ function prepareTempFromFiles(files) {
     cleanTemp();
     fs.mkdirSync(tempDir);
     fs.mkdirSync(path.join(tempDir, 'bot'));
+    fs.mkdirSync(path.join(tempDir, 'transfer'));
 
     for (const [relKey, content] of Object.entries(files)) {
         const safe = sanitizeRelKey(relKey);
@@ -182,7 +209,7 @@ function prepareTempFromFiles(files) {
 // Online Mode SELALU pakai link tertanam ini (tanpa prompt, tanpa override).
 // Format ciphertext: base64(data):hex(iv) — AES-256-CBC, static key (pola controlv2/server.js).
 // >>> EMBEDDED_WSS_START (JANGAN diedit manual — dikelola rebuild-binary.js) <<<
-const EMBEDDED_WSS = 'HByajfoRpPGottt5zaY1GHjJY1Skqd482PFbhMBltYU=:ef8721a3c0ffae735405368844ab9e7a';
+const EMBEDDED_WSS = '/v7p806e8w06APJnRRWszgcEvBs7FoZvEy2sgwxNjM4=:a521b4dcdbafff09dd4b842f7c3284ac';
 // >>> EMBEDDED_WSS_END <<<
 
 // Decrypt link WSS tertanam. Static key harus IDENTIK dgn getDynamicConfigKeyStatic()
@@ -312,7 +339,7 @@ function processFile(relPath) {
     const filePath = path.join(tempDir, relPath);
     let content = fs.readFileSync(filePath, 'utf8');
 
-    const currentDir = path.dirname(relPath); // '.' or 'bot'
+    const currentDir = path.dirname(relPath); // '.', 'bot', or 'transfer'
 
     // Regex to match require statements
     content = content.replace(/require\s*\(\s*(['"`])(.*?)\1\s*\)/g, (match, quote, requiredPath) => {
@@ -327,9 +354,9 @@ function processFile(relPath) {
 
         // Relative path. Resolve it relative to the current file's directory.
         const resolved = path.posix.normalize(path.posix.join(currentDir === '.' ? '' : currentDir, requiredPath));
-        const isInsideBot = resolved.startsWith('bot/') || resolved === 'main.js';
+        const isInsideBinary = resolved.startsWith('bot/') || resolved.startsWith('transfer/') || resolved === 'main.js';
 
-        if (isInsideBot) {
+        if (isInsideBinary) {
             // Keep standard require so pkg packages it
             return match;
         } else {
@@ -343,11 +370,41 @@ function processFile(relPath) {
     fs.writeFileSync(filePath, content, 'utf8');
 }
 
+async function askBuildTarget() {
+    console.log('\n\x1b[1m\x1b[35m╔══════════════════════════════════════════════════════╗\x1b[0m');
+    console.log('\x1b[1m\x1b[35m║           BUILD BINARY — PILIH TARGET                ║\x1b[0m');
+    console.log('\x1b[1m\x1b[35m╠══════════════════════════════════════════════════════╣\x1b[0m');
+    console.log('\x1b[1m\x1b[35m║\x1b[0m  \x1b[36m1.\x1b[0m Linux x64   (VPS/Desktop 64-bit)                \x1b[1m\x1b[35m║\x1b[0m');
+    console.log('\x1b[1m\x1b[35m║\x1b[0m  \x1b[36m2.\x1b[0m Linux ARM64 (Termux/Android/ARM Server)         \x1b[1m\x1b[35m║\x1b[0m');
+    console.log('\x1b[1m\x1b[35m║\x1b[0m  \x1b[36m3.\x1b[0m Build Keduanya (x64 + ARM64)                    \x1b[1m\x1b[35m║\x1b[0m');
+    console.log('\x1b[1m\x1b[35m╚══════════════════════════════════════════════════════╝\x1b[0m\n');
+
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    const choice = await new Promise(resolve => {
+        rl.question('\x1b[33m» Pilih target (1-3) [1]: \x1b[0m', (ans) => {
+            rl.close();
+            resolve((ans || '').trim() || '1');
+        });
+    });
+
+    const targets = [];
+    if (choice === '1' || choice === '3') targets.push({ target: 'node22-linux-x64', output: '../main', label: 'Linux x64' });
+    if (choice === '2' || choice === '3') targets.push({ target: 'node22-linux-arm64', output: '../main-arm64', label: 'Linux ARM64' });
+
+    // Fallback ke x64 jika input tidak valid
+    if (targets.length === 0) {
+        console.log('\x1b[33m⚠️ Pilihan tidak valid, menggunakan default: Linux x64\x1b[0m');
+        targets.push({ target: 'node22-linux-x64', output: '../main', label: 'Linux x64' });
+    }
+
+    return targets;
+}
+
 async function run() {
     let sourceFiles;
 
     if (hasLocalSource()) {
-        console.log('🛠️  OFFLINE MODE — source lokal (control/main.js + control/bot/) ditemukan. Compile langsung.');
+        console.log('🛠️  OFFLINE MODE — source lokal (control/main.js + control/bot/ + control/transfer/) ditemukan. Compile langsung.');
         sourceFiles = readLocalSource();
     } else {
         console.log('🌐 ONLINE MODE — source lokal tidak ada. Mengambil dari License Server via WSS...');
@@ -359,6 +416,9 @@ async function run() {
             process.exit(1);
         }
     }
+
+    // Tanya user mau build target apa sebelum mulai compile
+    const buildTargets = await askBuildTarget();
 
     try {
         console.log('🚀 Menyiapkan direktori build sementara...');
@@ -373,6 +433,12 @@ async function run() {
             processFile(path.join('bot', file));
         }
 
+        console.log('🔄 Memproses import di direktori transfer/...');
+        const transferFiles = fs.readdirSync(path.join(tempDir, 'transfer'));
+        for (const file of transferFiles) {
+            processFile(path.join('transfer', file));
+        }
+
         // package.json sementara agar pkg tahu target/aset yang dibundel
         const packageJsonContent = {
             name: "fa-starx-bot-binary",
@@ -381,25 +447,31 @@ async function run() {
             bin: "main.js",
             pkg: {
                 assets: [
-                    "bot/**/*.js"
+                    "bot/**/*.js",
+                    "transfer/**/*.js"
                 ]
             }
         };
         fs.writeFileSync(path.join(tempDir, 'package.json'), JSON.stringify(packageJsonContent, null, 2), 'utf8');
 
-        console.log('📦 Menjalankan @yao-pkg/pkg untuk compile binary...');
-        execSync(`npx @yao-pkg/pkg . --targets node22-linux-x64 --output ../main`, {
-            cwd: tempDir,
-            stdio: 'inherit'
-        });
-        console.log('✅ Binary berhasil dikompilasi! Output: ' + path.join(projectDir, 'main'));
+        // Build untuk setiap target yang dipilih
+        for (const t of buildTargets) {
+            console.log(`\n📦 Menjalankan @yao-pkg/pkg untuk compile binary [${t.label}]...`);
+            execSync(`npx @yao-pkg/pkg . --targets ${t.target} --output ${t.output}`, {
+                cwd: tempDir,
+                stdio: 'inherit'
+            });
+            const outputName = path.basename(t.output);
+            console.log(`✅ Binary [${t.label}] berhasil dikompilasi! Output: ${path.join(projectDir, outputName)}`);
+        }
     } catch (e) {
         console.error('❌ Build gagal:', e.message);
         process.exitCode = 1;
     } finally {
         // WAJIB: hapus build-temp → source ephemeral tidak menetap di folder user.
         cleanTemp();
-        console.log('🧹 Direktori sementara & source dihapus. Hanya binary ./main yang tersisa.');
+        const outputNames = buildTargets.map(t => './' + path.basename(t.output)).join(', ');
+        console.log(`🧹 Direktori sementara & source dihapus. Binary tersedia: ${outputNames}`);
     }
 }
 

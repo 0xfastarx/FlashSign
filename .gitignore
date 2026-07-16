@@ -1,0 +1,25 @@
+.env
+.data/
+.claude/
+bot/
+control/
+node_modules/
+memory/
+main.js
+.gitignore
+
+# Compiled binary — jangan pernah di-push (75MB+)
+main
+main.exe
+
+# Direktori sementara saat build (source ephemeral di Online Mode)
+build-temp/
+
+# Script rebuild binary — lokal saja, jangan di-push
+rebuild-binary.js
+
+# File plan lokal — tidak perlu di-push
+plan_ui_overhaul.txt
+
+# Extension Bitget — lokal saja
+Bitget-Wallet-Crypto-Web3-Bitcoin-USDT-Chrome-Web-Store/
